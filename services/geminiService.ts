@@ -3,6 +3,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { ScriptParts, ScriptPartKey, PovScriptSegment } from "../types";
 import { getAiClient, callWithAiFallback } from "./keyService";
 import { getScriptLengthInstruction, getPersonaContext, getLanguageLabel } from "../utils/languageUtils";
+import * as flowApi from "./flowApiService";
+
+const GEMINI_KEY = ((import.meta as any).env?.VITE_GEMINI_API_KEY || '').trim();
+const hasGeminiImage = (): boolean => !!GEMINI_KEY;
 
 interface GenerativePart {
   mimeType: string;
@@ -89,6 +93,21 @@ export const generateScenarioImage = async (
   gender: string = 'Nữ',
   language: string = 'vi'
 ): Promise<string> => {
+  // If no Gemini key, use Flow API T2I directly
+  if (!hasGeminiImage() && flowApi.isFlowApiAvailable()) {
+    const { persona, context } = getPersonaContext(language);
+    const subjectDescription = faceImagePart
+      ? `Character based on reference. Gender: ${gender}. ${persona}.`
+      : `Subject: A young ${persona} ${gender}. ${characterDescription}`;
+    const flowPrompt = `Photorealistic 9:16. ${subjectDescription}. ${context}. Action matches: "${scriptPart}". Product: ${productName} visible. Cinematic, 8k, clean. NO TEXT. ${userCustomPrompt || ""}`;
+    console.log(`[GeminiService] Using Flow API T2I for image generation`);
+    const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
+    if (result.imageUrls && result.imageUrls.length > 0) {
+      return result.imageUrls[0];
+    }
+    throw new Error('Flow API T2I returned no images');
+  }
+
   const ai = getAiClient('image');
   const modelId = "gemini-3.1-flash-image-preview";
   const { persona, context } = getPersonaContext(language);
@@ -113,7 +132,16 @@ export const generateScenarioImage = async (
       if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
     }
     throw new Error("Fail");
-  } catch (error) { throw error; }
+  } catch (error) {
+    // Fallback to Flow API
+    if (flowApi.isFlowApiAvailable()) {
+      console.warn('[GeminiService] Gemini image gen failed, falling back to Flow API T2I');
+      const flowPrompt = `Photorealistic 9:16. ${subjectDescription}. ${prompt}`;
+      const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
+      if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
+    }
+    throw error;
+  }
 };
 
 export const generateVeoPrompt = async (
@@ -242,6 +270,17 @@ export const generateCarouselImage = async (
   regenerateNote: string,
   language: string = 'vi'
 ): Promise<string> => {
+  // If no Gemini key, use Flow API T2I
+  if (!hasGeminiImage() && flowApi.isFlowApiAvailable()) {
+    const { persona, context } = getPersonaContext(language);
+    const targetLangLabel = getLanguageLabel(language);
+    const flowPrompt = `Photorealistic TikTok Carousel Slide 3:4 ratio. ${persona} character holding product. ${characterNote}. Expression matching: "${textContent}". High-end lifestyle, cinematic, 8k. ${extraNote} ${regenerateNote || ''}`;
+    console.log(`[GeminiService] Using Flow API T2I for carousel image`);
+    const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '3:4' });
+    if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
+    throw new Error('Flow API T2I returned no images');
+  }
+
   const ai = getAiClient('image');
   const modelId = "gemini-3.1-flash-image-preview";
   const { persona, context } = getPersonaContext(language);
@@ -280,7 +319,14 @@ export const generateCarouselImage = async (
       if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
     }
     throw new Error("No image generated.");
-  } catch (error) { throw error; }
+  } catch (error) {
+    if (flowApi.isFlowApiAvailable()) {
+      console.warn('[GeminiService] Gemini carousel failed, falling back to Flow API T2I');
+      const result = await flowApi.textToImage([prompt], { aspect_ratio: '3:4' });
+      if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
+    }
+    throw error;
+  }
 };
 
 export const analyzeVideoContent = async (videoFile: File): Promise<string> => { return ""; };

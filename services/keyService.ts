@@ -172,13 +172,14 @@ export const callWithRetry = async (fn: () => Promise<any>, retries = 2, delay =
  */
 export const getAiClient = (type: 'text' | 'image' = 'text'): any => {
   if (type === 'image') {
-    // Image generation: still uses Google GenAI (OpenRouter doesn't support image gen)
+    // Image generation: prefers Google GenAI, falls back to OpenRouter adapter
     if (!GOOGLE_IMAGE_API_KEY) {
-      console.warn('[KeyService] No VITE_GEMINI_API_KEY for image generation, trying OpenRouter adapter...');
+      // No Gemini key — return OpenRouter adapter (vision/analysis works,
+      // actual image gen will fail and services fallback to Flow API T2I)
       if (OPENROUTER_API_KEY) {
         return createOpenRouterAdapter(OPENROUTER_API_KEY);
       }
-      throw new Error("Chưa cấu hình API Key cho tạo ảnh. Vui lòng thêm VITE_GEMINI_API_KEY vào .env");
+      throw new Error("Chưa cấu hình API Key. Vui lòng thêm VITE_GEMINI_API_KEY hoặc VITE_OPENROUTER_API_KEY vào .env");
     }
     return new GoogleGenAI({ apiKey: GOOGLE_IMAGE_API_KEY });
   }
