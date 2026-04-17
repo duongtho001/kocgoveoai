@@ -588,8 +588,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         language
       );
       setState((prev: any) => ({ ...prev, script, scriptLayout: layoutToUse }));
-      // Auto-save to history
-      setTimeout(() => saveToHistory(), 500);
+      // Auto-save to history (pass script directly to avoid stale closure)
+      try { saveToHistory(script); } catch (e) { console.warn('[History] auto-save failed', e); }
     } catch (e) {
       console.error(e);
     } finally {
@@ -1101,24 +1101,32 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     } catch { return []; }
   };
 
-  const saveToHistory = () => {
-    if (!state.productName || !state.script) return;
-    const history = getHistory();
-    const entry = {
-      id: Date.now(),
-      name: state.productName,
-      date: new Date().toLocaleDateString('vi-VN'),
-      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      sceneCount: state.sceneCount,
-      imageStyle: state.imageStyle,
-      imageQuality: state.imageQuality,
-      thumbnail: state.productPreviewUrls?.[0] || '',
-      stateSnapshot: JSON.stringify(state),
-    };
-    // Keep last 20 entries
-    history.unshift(entry);
-    if (history.length > 20) history.pop();
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  const saveToHistory = (overrideScript?: any) => {
+    try {
+      const scriptToSave = overrideScript || state.script;
+      if (!state.productName || !scriptToSave) return;
+      const history = getHistory();
+      // Exclude File objects from serialization (they can't be JSON.stringified)
+      const { productFiles, faceFile, outfitFile, backgroundFile, ...serializableState } = state;
+      const safeState = { ...serializableState, script: scriptToSave };
+      const entry = {
+        id: Date.now(),
+        name: state.productName,
+        date: new Date().toLocaleDateString('vi-VN'),
+        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+        sceneCount: state.sceneCount,
+        imageStyle: state.imageStyle,
+        imageQuality: state.imageQuality,
+        thumbnail: state.productPreviewUrls?.[0] || '',
+        stateSnapshot: JSON.stringify(safeState),
+      };
+      // Keep last 20 entries
+      history.unshift(entry);
+      if (history.length > 20) history.pop();
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch (e) {
+      console.warn('[History] Save failed:', e);
+    }
   };
 
   const loadFromHistory = (entry: any) => {

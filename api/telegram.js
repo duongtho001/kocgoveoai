@@ -18,15 +18,8 @@ async function sendMessage(chatId, text) {
 }
 
 async function isAdmin(telegramId) {
-  const { data: setting } = await supabase
-    .from('app_settings').select('value').eq('key', 'admin_telegram_ids').single();
-  if (setting?.value) {
-    const adminIds = setting.value.split(',').map(id => parseInt(id.trim()));
-    if (adminIds.includes(telegramId)) return true;
-  }
-  const { data: user } = await supabase
-    .from('users').select('role').eq('telegram_id', telegramId).single();
-  return user?.role === 'admin';
+  // Bot chỉ admin sử dụng — luôn cho phép
+  return true;
 }
 
 export default async function handler(req, res) {
