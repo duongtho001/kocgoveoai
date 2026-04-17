@@ -113,23 +113,65 @@ export const generateKocScript = async (
     required.push(key);
   }
 
-  return callWithAiFallback(async (ai) => {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: { parts: [{ text: prompt }, ...imageParts.slice(0, 3).map(p => ({ inlineData: p }))] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: { type: Type.OBJECT, properties, required },
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+  const MAX_SCRIPT_RETRIES = 2;
+  
+  for (let attempt = 0; attempt <= MAX_SCRIPT_RETRIES; attempt++) {
+    try {
+      const result = await callWithAiFallback(async (ai) => {
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: { parts: [{ text: prompt }, ...imageParts.slice(0, 3).map(p => ({ inlineData: p }))] },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: { type: Type.OBJECT, properties, required },
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+          }
+        });
+        return JSON.parse(cleanJsonResponse(response.text || '{}'));
+      });
+      
+      // Validate: script must have all required keys with non-empty content
+      const resultKeys = Object.keys(result).filter(k => k.startsWith('v'));
+      const filledKeys = resultKeys.filter(k => result[k] && String(result[k]).trim().length > 5);
+      
+      if (filledKeys.length >= sceneCount) {
+        console.log(`[Script] ✅ Attempt ${attempt + 1}: ${filledKeys.length}/${sceneCount} keys OK`);
+        return result;
       }
-    });
-    return JSON.parse(cleanJsonResponse(response.text || '{}'));
-  }).catch((e) => {
-    console.error("Lỗi tạo kịch bản KOC 2:", e);
-    const fallback: ScriptParts = {};
-    for (let i = 1; i <= sceneCount; i++) fallback[`v${i}`] = '';
-    return fallback;
-  });
+      
+      // Partial result — retry if not last attempt
+      if (attempt < MAX_SCRIPT_RETRIES) {
+        console.warn(`[Script] ⚠️ Attempt ${attempt + 1}: Only ${filledKeys.length}/${sceneCount} keys, retrying...`);
+        await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+        continue;
+      }
+      
+      // Last attempt — accept partial if at least half the keys are filled
+      if (filledKeys.length >= Math.ceil(sceneCount / 2)) {
+        console.warn(`[Script] ⚠️ Accepting partial: ${filledKeys.length}/${sceneCount} keys`);
+        // Fill missing keys with empty string
+        for (let i = 1; i <= sceneCount; i++) {
+          if (!result[`v${i}`]) result[`v${i}`] = '';
+        }
+        return result;
+      }
+      
+      throw new Error(`Kịch bản không đủ nội dung (${filledKeys.length}/${sceneCount} phần). Vui lòng thử lại.`);
+      
+    } catch (e: any) {
+      if (attempt < MAX_SCRIPT_RETRIES && (e.message?.includes('JSON') || e.message?.includes('Unterminated'))) {
+        console.warn(`[Script] ⚠️ JSON parse error attempt ${attempt + 1}, retrying...`, e.message);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      if (attempt >= MAX_SCRIPT_RETRIES) {
+        console.error("Lỗi tạo kịch bản KOC 2:", e);
+        throw e; // Propagate error to UI instead of swallowing it
+      }
+    }
+  }
+  
+  throw new Error('Không thể tạo kịch bản sau nhiều lần thử. Vui lòng thử lại.');
 };
 
 /**
