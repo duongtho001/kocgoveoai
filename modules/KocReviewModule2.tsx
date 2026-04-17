@@ -31,14 +31,20 @@ const VOICE_OPTIONS = [
   "Giọng miền Nam 5-10 tuổi"
 ];
 
-// Flow API Voice options for video generation (R2V)
+// Flow API Voice options for video generation (R2V) — tên audioSpeaker chính thức
 const FLOW_VOICE_OPTIONS = [
-  { value: '', label: '-- Không dùng Voice (I2V) --' },
-  { value: 'Puck', label: '🎙️ Puck - Nam, tếu táo' },
-  { value: 'Charon', label: '🎙️ Charon - Nam, trầm ấm' },
-  { value: 'Kore', label: '🎙️ Kore - Nữ, trẻ trung' },
-  { value: 'Fenrir', label: '🎙️ Fenrir - Nam, gần gũi' },
-  { value: 'Zephyr', label: '🎙️ Zephyr - Nữ, ngọt ngào' }
+  { value: '', label: '-- Không dùng Voice (I2V) --', hasDemo: false },
+  { value: 'Achernar', label: '🎙️ Achernar', hasDemo: true },
+  { value: 'Achird', label: '🎙️ Achird', hasDemo: true },
+  { value: 'Algenib', label: '🎙️ Algenib', hasDemo: true },
+  { value: 'Algieba', label: '🎙️ Algieba', hasDemo: true },
+  { value: 'Alnilam', label: '🎙️ Alnilam', hasDemo: true },
+  { value: 'Aoede', label: '🎙️ Aoede', hasDemo: true },
+  { value: 'Autonoe', label: '🎙️ Autonoe', hasDemo: true },
+  { value: 'Callirrhoe', label: '🎙️ Callirrhoe', hasDemo: true },
+  { value: 'Charon', label: '🎙️ Charon', hasDemo: true },
+  { value: 'Despina', label: '🎙️ Despina', hasDemo: true },
+  { value: 'Enceladus', label: '🎙️ Enceladus', hasDemo: true },
 ];
 
 const ADDRESSING_OPTIONS = [
@@ -1389,14 +1395,34 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">🎙️ Voice mẫu (Tạo video)</label>
-                <select
-                  value={state.flowVoice}
-                  onChange={e => setState(p => ({ ...p, flowVoice: e.target.value }))}
-                  className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold text-sm`}
-                >
-                  {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
-                </select>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">🎙️ Voice mẫu (Tạo video R2V)</label>
+                <div className="flex gap-2">
+                  <select
+                    value={state.flowVoice}
+                    onChange={e => setState(p => ({ ...p, flowVoice: e.target.value }))}
+                    className={`flex-1 p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold text-sm ${
+                      state.flowVoice ? 'border-violet-400 bg-violet-50 text-violet-700' : ''
+                    }`}
+                  >
+                    {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                  </select>
+                  {state.flowVoice && (
+                    <button
+                      onClick={() => {
+                        const audio = new Audio(`/audio_demo/${state.flowVoice}.wav`);
+                        audio.play().catch(() => alert('Không tìm thấy file audio mẫu'));
+                      }}
+                      className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center gap-1.5 whitespace-nowrap"
+                      title="Nghe thử voice mẫu"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                      Nghe
+                    </button>
+                  )}
+                </div>
+                {state.flowVoice && (
+                  <p className="text-[9px] text-violet-500 font-bold px-1 mt-1">Khi chọn voice → Video sẽ dùng R2V (Reference-to-Video) thay vì I2V</p>
+                )}
               </div>
             </div>
 
