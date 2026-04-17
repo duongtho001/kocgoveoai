@@ -1255,7 +1255,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Thời lượng (Scenes)</label>
                 <select value={currentSceneCount} onChange={e => setState(p => ({ ...p, sceneCount: parseInt(e.target.value) }))} className={`w-full p-3 border rounded-xl bg-white focus:ring-2 ${theme.colors.secondaryBg} outline-none font-bold text-slate-700`}>
