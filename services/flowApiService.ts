@@ -5,6 +5,7 @@
  */
 
 const FLOW_API_URL = ((import.meta as any).env?.VITE_FLOW_API_URL || '').trim();
+const FLOW_API_KEY = ((import.meta as any).env?.VITE_FLOW_API_KEY || '').trim();
 
 // ============================================================
 // Types
@@ -36,6 +37,13 @@ const getApiUrl = (): string => {
   return FLOW_API_URL;
 };
 
+const getHeaders = (json: boolean = true): Record<string, string> => {
+  const headers: Record<string, string> = {};
+  if (json) headers['Content-Type'] = 'application/json';
+  if (FLOW_API_KEY) headers['X-API-Key'] = FLOW_API_KEY;
+  return headers;
+};
+
 /**
  * Upload ảnh lên Flow API server
  */
@@ -45,6 +53,7 @@ export const uploadImage = async (file: File): Promise<string> => {
   fd.append('file', file);
   const resp = await fetch(`${API}/api/upload-image`, {
     method: 'POST',
+    headers: getHeaders(false),
     body: fd
   });
   if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
@@ -78,7 +87,7 @@ export const waitForJob = async (
       throw new Error(`Job ${jobId} timeout sau ${timeoutMs / 1000}s`);
     }
 
-    const resp = await fetch(`${API}/api/jobs/${jobId}`);
+    const resp = await fetch(`${API}/api/jobs/${jobId}`, { headers: getHeaders(false) });
     if (!resp.ok) throw new Error(`Poll failed: ${resp.status}`);
     const job: FlowJob = await resp.json();
 
@@ -126,7 +135,7 @@ export const textToImage = async (
 
   const resp = await fetch(`${API}/api/text-to-image`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({
       prompts,
       aspect_ratio: options.aspect_ratio || '9:16',
@@ -163,7 +172,7 @@ export const referenceToImage = async (
 
   const resp = await fetch(`${API}/api/reference-to-image`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({
       prompts,
       reference_images: referenceImages,
@@ -199,7 +208,7 @@ export const textToVideo = async (
 
   const resp = await fetch(`${API}/api/text-to-video`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({
       prompts,
       aspect_ratio: options.aspect_ratio || '9:16',
@@ -232,7 +241,7 @@ export const imageToVideo = async (
 
   const resp = await fetch(`${API}/api/image-to-video`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({
       items,
       aspect_ratio: options.aspect_ratio || '9:16',
@@ -264,7 +273,7 @@ export const multiRefVideo = async (
 
   const resp = await fetch(`${API}/api/multi-ref-video`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({
       items,
       aspect_ratio: options.aspect_ratio || '9:16',
