@@ -68,7 +68,7 @@ interface KocReviewModule2Props {
 /**
  * Run tasks with limited concurrency (parallel batches of N)
  */
-const runWithConcurrency = async <T>(
+const runWithConcurrency = async <T,>(
   items: T[],
   handler: (item: T) => Promise<void>,
   concurrency: number = 2
