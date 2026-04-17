@@ -102,6 +102,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     sceneCount: 5,
     mergedVideoUrl: '' as string,
     mergeLoading: false,
+    showGuide: false,
+    showHistory: false,
     productFiles: [], 
     productPreviewUrls: [],
     productName: '',
@@ -581,6 +583,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
         language
       );
       setState((prev: any) => ({ ...prev, script, scriptLayout: layoutToUse }));
+      // Auto-save to history
+      setTimeout(() => saveToHistory(), 500);
     } catch (e) {
       console.error(e);
     } finally {
@@ -1061,9 +1065,54 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     URL.revokeObjectURL(url);
   };
 
+  // Lịch sử đã tạo
+  const HISTORY_KEY = 'koc_v2_project_history';
+  
+  const getHistory = (): any[] => {
+    try {
+      return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    } catch { return []; }
+  };
+
+  const saveToHistory = () => {
+    if (!state.productName || !state.script) return;
+    const history = getHistory();
+    const entry = {
+      id: Date.now(),
+      name: state.productName,
+      date: new Date().toLocaleDateString('vi-VN'),
+      time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      sceneCount: state.sceneCount,
+      imageStyle: state.imageStyle,
+      imageQuality: state.imageQuality,
+      thumbnail: state.productPreviewUrls?.[0] || '',
+      stateSnapshot: JSON.stringify(state),
+    };
+    // Keep last 20 entries
+    history.unshift(entry);
+    if (history.length > 20) history.pop();
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  };
+
+  const loadFromHistory = (entry: any) => {
+    try {
+      const restored = JSON.parse(entry.stateSnapshot);
+      setState(restored);
+    } catch (e) {
+      alert('Không thể khôi phục dự án này.');
+    }
+  };
+
+  const deleteFromHistory = (id: number) => {
+    const history = getHistory().filter((h: any) => h.id !== id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    setState((p: any) => ({ ...p })); // force re-render
+  };
+
   const hasGeneratedItems = state.script && Object.values(state.images).some((img: any) => img.url);
 
   const currentSceneCount = typeof state.sceneCount === 'object' ? (state.sceneCount.count || 0) : (state.sceneCount || 0);
+
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 koc-review-v2-container">
@@ -1076,6 +1125,117 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
           border-color: #ccc !important;
         }
       ` }} />
+
+      {/* HƯỚNG DẪN + LỊCH SỬ */}
+      <div className="flex gap-3 mb-4">
+        <button
+          onClick={() => setState((p: any) => ({ ...p, showGuide: !p.showGuide, showHistory: false }))}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+            state.showGuide ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+          }`}
+        >
+          📖 Hướng dẫn
+        </button>
+        <button
+          onClick={() => setState((p: any) => ({ ...p, showHistory: !p.showHistory, showGuide: false }))}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+            state.showHistory ? 'bg-violet-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+          }`}
+        >
+          🕐 Lịch sử ({getHistory().length})
+        </button>
+      </div>
+
+      {/* GUIDE SECTION */}
+      {state.showGuide && (
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 mb-6 animate-fadeIn">
+          <h3 className="text-sm font-black text-blue-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+            📖 HƯỚNG DẪN SỬ DỤNG KOC STUDIO V2
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-700">
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">1</span>
+                <div><b>Upload ảnh sản phẩm</b> (tối đa 3 ảnh) + ảnh mặt mẫu + trang phục nếu có</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">2</span>
+                <div><b>Điền thông tin</b>: Tên SP, USP, đối tượng, giới tính, giọng điệu, xưng hô</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">3</span>
+                <div><b>Chọn cài đặt</b>: Số cảnh, phong cách (Chân thực/3D), chất lượng (Nhanh/4K), giọng video, luồng song song</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">4</span>
+                <div><b>Nhấn "Bắt đầu tạo kịch bản"</b> để AI viết kịch bản review</div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-violet-600 text-white font-black flex items-center justify-center flex-shrink-0">5</span>
+                <div><b>Dự án tự động</b>: Nhấn nút tím để chạy pipeline đầy đủ (Prompt → Ảnh → Video Prompt → Video)</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-violet-600 text-white font-black flex items-center justify-center flex-shrink-0">6</span>
+                <div><b>Hoặc chạy từng bước</b>: Tạo Prompt Ảnh → Tạo Ảnh → Tạo Prompt Video → Tạo Video</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center flex-shrink-0">7</span>
+                <div><b>Nối Video</b>: Khi có ≥2 video, nhấn "Nối Video" để ghép tất cả thành 1 video</div>
+              </div>
+              <div className="flex gap-3">
+                <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center flex-shrink-0">8</span>
+                <div><b>Tải xuống</b>: Tải ảnh (ZIP), prompt ảnh, prompt video hoặc video đã nối</div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+            <p className="text-xs text-amber-800 font-bold">💡 <b>Mẹo</b>: Dùng "Luồng song song" 2x-3x để tăng tốc tạo ảnh/video. Chọn "Nhanh" nếu không cần 4K upscale.</p>
+          </div>
+        </div>
+      )}
+
+      {/* HISTORY SECTION */}
+      {state.showHistory && (
+        <div className="bg-gradient-to-br from-violet-50 to-purple-50 rounded-2xl border border-violet-200 p-6 mb-6 animate-fadeIn">
+          <h3 className="text-sm font-black text-violet-800 uppercase tracking-tight mb-4 flex items-center gap-2">
+            🕐 LỊCH SỬ DỰ ÁN ĐÃ TẠO
+          </h3>
+          {getHistory().length === 0 ? (
+            <p className="text-xs text-slate-500 text-center py-8">Chưa có dự án nào. Hãy tạo kịch bản để lưu lịch sử.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto pr-1">
+              {getHistory().map((entry: any) => (
+                <div key={entry.id} className="bg-white rounded-xl border border-slate-200 p-4 flex gap-3 hover:shadow-md transition-all group">
+                  {entry.thumbnail && (
+                    <img src={entry.thumbnail} className="w-12 h-16 object-cover rounded-lg border border-slate-100 flex-shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-xs font-black text-slate-800 truncate">{entry.name}</h4>
+                    <p className="text-[10px] text-slate-400 font-bold">{entry.date} {entry.time}</p>
+                    <p className="text-[10px] text-slate-500">{entry.sceneCount} cảnh • {entry.imageStyle} • {entry.imageQuality}</p>
+                    <div className="flex gap-1 mt-2">
+                      <button
+                        onClick={() => loadFromHistory(entry)}
+                        className="px-2 py-1 bg-violet-100 text-violet-700 rounded-md text-[10px] font-black hover:bg-violet-200 transition-all"
+                      >
+                        📂 Mở
+                      </button>
+                      <button
+                        onClick={() => { if (confirm('Xóa dự án này?')) deleteFromHistory(entry.id); }}
+                        className="px-2 py-1 bg-red-50 text-red-500 rounded-md text-[10px] font-black hover:bg-red-100 transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-8">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
           <div className="md:col-span-5 flex flex-col gap-4">
