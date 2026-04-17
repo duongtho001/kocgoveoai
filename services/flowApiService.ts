@@ -312,7 +312,7 @@ export const textToImage = async (
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
       num_images: options.num_images || 1,
-      upscale_quality: options.upscale_quality || '4K',
+      ...(options.upscale_quality ? { upscale_quality: options.upscale_quality } : {}),
     },
   });
 
@@ -350,7 +350,7 @@ export const referenceToImage = async (
       reference_images: referenceImages,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
-      upscale_quality: options.upscale_quality || '4K',
+      ...(options.upscale_quality ? { upscale_quality: options.upscale_quality } : {}),
     },
   });
 
