@@ -559,12 +559,16 @@ export const generateKocImage = async (
 };
 
 /**
- * Batch Image Generation — gửi TẤT CẢ prompts trong 1 request để server chạy song song.
- * Server dùng max_concurrency để kiểm soát số luồng chạy đồng thời.
+ * Batch Image Generation — chia prompts theo số profiles trên server.
  * 
- * @param items Array of { key, prompt, refDataUrls } — mỗi item = 1 scene
- * @param maxConcurrency Số prompt chạy song song trên server
- * @param onImageReady Callback khi từng ảnh được trả về (để UI update real-time)
+ * Logic:
+ * 1. Query server → biết số profiles (accounts)
+ * 2. Chia đều prompts cho mỗi profile → gửi 1 request/profile
+ * 3. Server job_queue tự phân phối mỗi request cho 1 profile khác nhau
+ * 
+ * VD: 5 prompts, 2 profiles, 4 luồng tổng:
+ *   → Request 1: 3 prompts, max_concurrency=2 → Profile 1
+ *   → Request 2: 2 prompts, max_concurrency=2 → Profile 2
  */
 export const generateKocImageBatch = async (
   items: { key: string; prompt: string }[],
@@ -576,64 +580,125 @@ export const generateKocImageBatch = async (
   if (items.length === 0) return [];
   
   const upscaleOpt = imageQuality === '4K' ? '4K' : undefined;
-  const allPrompts = items.map(item => item.prompt);
   
-  console.log(`[BatchImage] Sending ${allPrompts.length} prompts, ${refDataUrls.length} refs, concurrency=${maxConcurrency}`);
+  // Step 1: Query server for profile count
+  let numProfiles = 1;
+  try {
+    const serverInfo = await flowApi.getFlowServerConcurrency();
+    numProfiles = Math.max(1, (serverInfo.accounts || []).length);
+    console.log(`[BatchImage] Server has ${numProfiles} profile(s)`);
+  } catch {
+    console.warn('[BatchImage] Cannot query server profiles, using 1');
+  }
 
-  // Try R2I first (with references)
+  // Step 2: Upload refs ONCE (shared across all requests)
+  let uploadedPaths: string[] = [];
   if (refDataUrls.length > 0) {
     try {
-      // Upload all reference images ONCE
-      const uploadedPaths: string[] = [];
       for (let i = 0; i < refDataUrls.length; i++) {
         const path = await flowApi.uploadBase64Image(refDataUrls[i], `ref_batch_${i}.png`);
         uploadedPaths.push(path);
       }
-      
-      const result = await flowApi.referenceToImage(
-        allPrompts,
-        uploadedPaths,
-        { 
-          aspect_ratio: '9:16', 
-          upscale_quality: upscaleOpt,
-          max_concurrency: maxConcurrency 
-        },
-        onProgress
-      );
-      
-      if (result.imageUrls && result.imageUrls.length > 0) {
-        console.log(`[BatchImage] ✅ R2I returned ${result.imageUrls.length} images`);
-        return items.map((item, i) => ({
-          key: item.key,
-          url: result.imageUrls[i] || ''
-        }));
-      }
-    } catch (r2iError) {
-      console.warn('[BatchImage] R2I batch failed, falling back to T2I:', r2iError);
+      console.log(`[BatchImage] Uploaded ${uploadedPaths.length} refs`);
+    } catch (e) {
+      console.warn('[BatchImage] Ref upload failed, will use T2I:', e);
+      uploadedPaths = [];
     }
   }
   
-  // Fallback: T2I batch (no references)
-  console.log(`[BatchImage] T2I batch ${allPrompts.length} prompts, concurrency=${maxConcurrency}`);
-  const result = await flowApi.textToImage(
-    allPrompts,
-    { 
-      aspect_ratio: '9:16', 
-      upscale_quality: upscaleOpt,
-      max_concurrency: maxConcurrency 
-    },
-    onProgress
-  );
+  // Step 3: Split items across profiles
+  const perProfile = Math.ceil(items.length / numProfiles);
+  const concurrencyPerProfile = Math.max(1, Math.ceil(maxConcurrency / numProfiles));
+  const chunks: { key: string; prompt: string }[][] = [];
   
-  if (result.imageUrls && result.imageUrls.length > 0) {
-    console.log(`[BatchImage] ✅ T2I returned ${result.imageUrls.length} images`);
-    return items.map((item, i) => ({
-      key: item.key,
-      url: result.imageUrls[i] || ''
-    }));
+  for (let i = 0; i < items.length; i += perProfile) {
+    chunks.push(items.slice(i, i + perProfile));
   }
   
-  throw new Error('Flow API: không tạo được ảnh batch');
+  console.log(`[BatchImage] Splitting ${items.length} prompts into ${chunks.length} request(s), ${concurrencyPerProfile} concurrency each`);
+
+  // Step 4: Send requests in parallel (1 per profile)
+  const useR2I = uploadedPaths.length > 0;
+  
+  const chunkResults = await Promise.allSettled(
+    chunks.map(async (chunk, chunkIdx) => {
+      const prompts = chunk.map(c => c.prompt);
+      
+      try {
+        if (useR2I) {
+          const result = await flowApi.referenceToImage(
+            prompts,
+            uploadedPaths,
+            {
+              aspect_ratio: '9:16',
+              upscale_quality: upscaleOpt,
+              max_concurrency: concurrencyPerProfile
+            },
+            onProgress
+          );
+          return { chunkIdx, imageUrls: result.imageUrls || [] };
+        } else {
+          const result = await flowApi.textToImage(
+            prompts,
+            {
+              aspect_ratio: '9:16',
+              upscale_quality: upscaleOpt,
+              max_concurrency: concurrencyPerProfile
+            },
+            onProgress
+          );
+          return { chunkIdx, imageUrls: result.imageUrls || [] };
+        }
+      } catch (e: any) {
+        console.error(`[BatchImage] Chunk ${chunkIdx + 1} failed:`, e.message);
+        // If R2I fails, try T2I for this chunk
+        if (useR2I) {
+          try {
+            console.warn(`[BatchImage] Chunk ${chunkIdx + 1} R2I failed, trying T2I...`);
+            const result = await flowApi.textToImage(
+              prompts,
+              {
+                aspect_ratio: '9:16',
+                upscale_quality: upscaleOpt,
+                max_concurrency: concurrencyPerProfile
+              },
+              onProgress
+            );
+            return { chunkIdx, imageUrls: result.imageUrls || [] };
+          } catch (t2iError) {
+            console.error(`[BatchImage] Chunk ${chunkIdx + 1} T2I also failed`);
+          }
+        }
+        return { chunkIdx, imageUrls: [] as string[] };
+      }
+    })
+  );
+
+  // Step 5: Merge results back in order
+  const allResults: { key: string; url: string }[] = [];
+  let itemIdx = 0;
+  
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const result = chunkResults[ci];
+    const imgUrls = result.status === 'fulfilled' ? result.value.imageUrls : [];
+    
+    for (let j = 0; j < chunk.length; j++) {
+      allResults.push({
+        key: chunk[j].key,
+        url: imgUrls[j] || ''
+      });
+    }
+  }
+
+  const successCount = allResults.filter(r => r.url).length;
+  console.log(`[BatchImage] ✅ Complete: ${successCount}/${items.length} images across ${chunks.length} profile(s)`);
+  
+  if (successCount === 0) {
+    throw new Error('Flow API: không tạo được ảnh nào');
+  }
+  
+  return allResults;
 };
 
 /**
