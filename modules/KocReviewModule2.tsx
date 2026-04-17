@@ -100,6 +100,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     videoVoice: '' as string,
     batchConcurrency: 2,
     sceneCount: 5,
+    mergedVideoUrl: '' as string,
+    mergeLoading: false,
     productFiles: [], 
     productPreviewUrls: [],
     productName: '',
@@ -887,6 +889,47 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     await runWithConcurrency(keys, handleFlowVideoForKey, state.batchConcurrency);
   };
 
+  // Merge: Nối tất cả video thành 1
+  const handleMergeVideos = async () => {
+    const videoKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
+      .filter(key => state.images[key]?.videoUrl);
+    
+    if (videoKeys.length < 2) {
+      alert('Cần ít nhất 2 video để nối.');
+      return;
+    }
+
+    setState((p: any) => ({ ...p, mergeLoading: true, mergedVideoUrl: '' }));
+    try {
+      console.log(`[Merge] Uploading ${videoKeys.length} videos...`);
+      // Upload all video blob URLs to server to get paths
+      const videoPaths: string[] = [];
+      for (const key of videoKeys) {
+        const videoUrl = state.images[key].videoUrl;
+        const resp = await fetch(videoUrl);
+        const blob = await resp.blob();
+        const file = new File([blob], `scene_${key}.mp4`, { type: 'video/mp4' });
+        const path = await flowApi.uploadVideo(file);
+        videoPaths.push(path);
+        console.log(`[Merge] Uploaded ${key}: ${path}`);
+      }
+
+      console.log(`[Merge] Merging ${videoPaths.length} videos...`);
+      const result = await flowApi.mergeVideos(
+        videoPaths,
+        `koc_${state.productName || 'merged'}`,
+        (job) => console.log(`[Merge] ${job.progress}%`)
+      );
+
+      setState((p: any) => ({ ...p, mergedVideoUrl: result.videoUrl, mergeLoading: false }));
+      console.log('[Merge] ✅ Done:', result.videoUrl);
+    } catch (e) {
+      console.error('[Merge] Failed:', e);
+      alert('Nối video thất bại: ' + (e as Error).message);
+      setState((p: any) => ({ ...p, mergeLoading: false }));
+    }
+  };
+
   // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ với nút Stop
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoStep, setAutoStep] = useState('');
@@ -1511,6 +1554,47 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                         </div>
                       ))}
                     </div>
+                    {videoKeys.length >= 2 && (
+                      <div className="mt-4 flex flex-col items-center gap-4">
+                        <button
+                          onClick={handleMergeVideos}
+                          disabled={state.mergeLoading}
+                          className={`w-full py-4 rounded-xl text-sm font-black uppercase tracking-wider transition-all flex items-center justify-center gap-3 ${
+                            state.mergeLoading
+                              ? 'bg-amber-500/20 text-amber-400 cursor-wait'
+                              : state.mergedVideoUrl
+                                ? 'bg-emerald-600 text-white shadow-lg hover:bg-emerald-700 active:scale-95'
+                                : 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg hover:scale-[1.02] active:scale-95'
+                          }`}
+                        >
+                          {state.mergeLoading ? (
+                            <><div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" /> Đang nối video...</>
+                          ) : state.mergedVideoUrl ? (
+                            <><span>🔄</span> Nối lại Video ({videoKeys.length} cảnh)</>
+                          ) : (
+                            <><span>🎬</span> Nối Video ({videoKeys.length} cảnh → 1 video)</>
+                          )}
+                        </button>
+                        {state.mergedVideoUrl && (
+                          <div className="w-full space-y-3">
+                            <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest text-center">✅ VIDEO ĐÃ NỐI</h4>
+                            <video
+                              src={state.mergedVideoUrl}
+                              controls
+                              playsInline
+                              className="w-full max-w-md mx-auto aspect-[9/16] bg-black rounded-xl border-2 border-emerald-500/30"
+                            />
+                            <a
+                              href={state.mergedVideoUrl}
+                              download={`koc_merged_${state.productName || 'video'}.mp4`}
+                              className="block w-full max-w-md mx-auto py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-center text-sm uppercase tracking-wider transition-all active:scale-95"
+                            >
+                              ⬇ Tải Video Đã Nối
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
