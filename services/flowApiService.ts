@@ -377,6 +377,95 @@ export const promptToVideo = async (
   };
 };
 
+// ============================================================
+// Merge Videos (nối nhiều video thành 1)
+// ============================================================
+
+/**
+ * Upload video lên Flow API server để lấy path cho merge
+ */
+export const uploadVideo = async (file: File): Promise<string> => {
+  const API = getApiUrl();
+  const fd = new FormData();
+  fd.append('file', file);
+  const resp = await fetch(`${API}/api/upload-image`, {
+    method: 'POST',
+    headers: getHeaders(false),
+    body: fd
+  });
+  if (!resp.ok) throw new Error(`Upload video failed: ${resp.status}`);
+  const data = await resp.json();
+  return data.path;
+};
+
+/**
+ * Nối (merge) nhiều video thành 1 video duy nhất
+ * @param videoPaths - Danh sách đường dẫn video trên server (≥2)
+ * @param outputName - Tên file output (không cần .mp4)
+ */
+export const mergeVideos = async (
+  videoPaths: string[],
+  outputName: string = 'merged_video',
+  onProgress?: FlowProgressCallback
+): Promise<{ jobId: string; videoUrl: string }> => {
+  const API = getApiUrl();
+
+  if (videoPaths.length < 2) {
+    throw new Error('Cần ít nhất 2 video để nối');
+  }
+
+  const resp = await fetch(`${API}/api/merge-videos`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      video_paths: videoPaths,
+      output_name: outputName,
+    }),
+  });
+
+  if (!resp.ok) throw new Error(`Merge failed: ${resp.status}`);
+  const data = await resp.json();
+
+  // If it returns a job_id, wait for it
+  if (data.job_id) {
+    const job = await waitForJob(data.job_id, onProgress);
+    return { jobId: data.job_id, videoUrl: getVideoUrl(data.job_id) };
+  }
+
+  // If it returns directly (synchronous merge)
+  return {
+    jobId: data.job_id || 'direct',
+    videoUrl: data.output_path ? `${API}/api/storage/video?path=${encodeURIComponent(data.output_path)}` : data.url || ''
+  };
+};
+
+/**
+ * Download video từ URL và upload lên Flow server
+ * (Dùng khi video ở dạng URL cần convert sang server path)
+ */
+export const videoUrlToPath = async (videoUrl: string): Promise<string> => {
+  // Nếu đã là server path (bắt đầu bằng /api/ hoặc output/)
+  if (videoUrl.startsWith('/api/') || videoUrl.startsWith('output/') || videoUrl.includes('/api/jobs/')) {
+    // Extract path nếu là full URL
+    const url = new URL(videoUrl, getApiUrl());
+    // For job video URLs, we need the actual file path
+    if (url.pathname.includes('/api/jobs/') && url.pathname.includes('/video')) {
+      // Download video and re-upload to get a file path
+      const resp = await fetch(videoUrl);
+      const blob = await resp.blob();
+      const file = new File([blob], 'video.mp4', { type: 'video/mp4' });
+      return uploadVideo(file);
+    }
+    return url.pathname;
+  }
+
+  // Download and upload
+  const resp = await fetch(videoUrl);
+  const blob = await resp.blob();
+  const file = new File([blob], 'video.mp4', { type: 'video/mp4' });
+  return uploadVideo(file);
+};
+
 /**
  * Check if Flow API is configured and available
  */
