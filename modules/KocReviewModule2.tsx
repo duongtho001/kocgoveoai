@@ -179,24 +179,37 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
           const cleanOutfitUrl = (parsed.outfitPreviewUrl && parsed.outfitPreviewUrl.startsWith('data:')) ? parsed.outfitPreviewUrl : null;
           const cleanBgUrl = (parsed.backgroundPreviewUrl && parsed.backgroundPreviewUrl.startsWith('data:')) ? parsed.backgroundPreviewUrl : null;
           
-          setState((prev: any) => ({
-            ...prev,
-            ...parsed,
-            sceneCount: safeSceneCount,
-            productFiles: [],
-            productPreviewUrls: cleanPreviewUrls,
-            faceFile: null,
-            facePreviewUrl: cleanFaceUrl,
-            outfitFile: null,
-            outfitPreviewUrl: cleanOutfitUrl,
-            backgroundFile: null,
-            backgroundPreviewUrl: cleanBgUrl,
-            isGeneratingScript: false,
-            isExtractingOutfit: false,
-            isFullWorkflowRunning: false,
-            isRegeneratingPart: {},
-            imagePrompts: parsed.imagePrompts || {}
-          }));
+          setState((prev: any) => {
+            // Clean up empty script: if script exists but all parts are empty, set to null
+            let cleanScript = parsed.script;
+            if (cleanScript && typeof cleanScript === 'object') {
+              const hasContent = Object.values(cleanScript).some((v: any) => v && String(v).trim().length > 0);
+              if (!hasContent) {
+                cleanScript = null;
+                console.log('[KOC] Cleared empty script state on restore');
+              }
+            }
+            
+            return {
+              ...prev,
+              ...parsed,
+              sceneCount: safeSceneCount,
+              script: cleanScript,
+              productFiles: [],
+              productPreviewUrls: cleanPreviewUrls,
+              faceFile: null,
+              facePreviewUrl: cleanFaceUrl,
+              outfitFile: null,
+              outfitPreviewUrl: cleanOutfitUrl,
+              backgroundFile: null,
+              backgroundPreviewUrl: cleanBgUrl,
+              isGeneratingScript: false,
+              isExtractingOutfit: false,
+              isFullWorkflowRunning: false,
+              isRegeneratingPart: {},
+              imagePrompts: parsed.imagePrompts || {}
+            };
+          });
         }
       }
     } catch (e) {
@@ -699,8 +712,18 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
   };
 
   const handleGenerate = async () => {
-    if (state.productFiles.length === 0 && state.productPreviewUrls.length === 0) {
-      alert("Vui lòng tải ảnh sản phẩm.");
+    // Validate product images
+    const hasFiles = state.productFiles?.length > 0;
+    const hasPreviewUrls = state.productPreviewUrls?.filter(
+      (url: string) => url && url.startsWith('data:') && url.includes(',') && url.length > 100
+    ).length > 0;
+    
+    console.log(`[handleGenerate] productFiles: ${state.productFiles?.length || 0}, validPreviewUrls: ${
+      state.productPreviewUrls?.filter((u: string) => u?.startsWith('data:') && u.length > 100).length || 0
+    }/${state.productPreviewUrls?.length || 0}`);
+    
+    if (!hasFiles && !hasPreviewUrls) {
+      alert("Vui lòng tải ảnh sản phẩm (ảnh có thể bị mất sau khi reload trang — hãy tải lại).");
       return;
     }
     if (!state.productName) {
@@ -729,20 +752,22 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
 
     try {
       let imageParts = [];
-      if (state.productFiles.length > 0) {
+      if (hasFiles) {
         imageParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
       } else {
         // Only use data: URLs, skip invalid/empty ones
         imageParts = state.productPreviewUrls
-          .filter((url: string) => url && url.startsWith('data:') && url.includes(','))
+          .filter((url: string) => url && url.startsWith('data:') && url.includes(',') && url.length > 100)
           .map((url: string) => ({
-            mimeType: 'image/png',
+            mimeType: url.match(/^data:(.*?);/)?.[1] || 'image/png',
             data: url.split(',')[1]
           }));
       }
 
+      console.log(`[handleGenerate] imageParts count: ${imageParts.length}`);
+
       if (imageParts.length === 0) {
-        alert('Ảnh sản phẩm không hợp lệ. Vui lòng tải lại ảnh.');
+        alert('Ảnh sản phẩm không hợp lệ hoặc đã hết hạn. Vui lòng tải lại ảnh sản phẩm.');
         setState((prev: any) => ({ ...prev, isGeneratingScript: false }));
         return;
       }
@@ -769,6 +794,13 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         state.targetAudience,
         language
       );
+      
+      // Validate script result
+      if (!script || typeof script !== 'object' || Object.keys(script).length === 0) {
+        throw new Error('Kịch bản trả về rỗng. Vui lòng thử lại.');
+      }
+      
+      console.log(`[handleGenerate] ✅ Script keys: ${Object.keys(script).length}`);
       setState((prev: any) => ({ ...prev, script, scriptLayout: layoutToUse }));
     } catch (e: any) {
       console.error('Script generation error:', e);
