@@ -10,6 +10,8 @@ export interface GeneratedImage {
   customPrompt?: string;
   regenNote?: string;
   pose?: string;
+  videoUrl?: string;
+  videoLoading?: boolean;
 }
 
 export interface VideoPromptState {

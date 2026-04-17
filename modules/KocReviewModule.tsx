@@ -83,6 +83,7 @@ interface SceneItemProps {
   handleUploadImageForKey: (key: string, file: File) => void;
   handleDeleteImageForKey: (key: string) => void;
   handleTranslateForKey: (key: string, type: 'image' | 'video') => void;
+  handleFlowVideoForKey: (key: string) => void;
   language: string;
 }
 
@@ -98,6 +99,7 @@ const SceneItem: React.FC<SceneItemProps> = ({
   handleUploadImageForKey,
   handleDeleteImageForKey,
   handleTranslateForKey,
+  handleFlowVideoForKey,
   language
 }) => {
   const dragControls = useDragControls();
@@ -135,6 +137,7 @@ const SceneItem: React.FC<SceneItemProps> = ({
         onGeneratePrompt={() => handleGeneratePromptForKey(sceneKey)}
         onGenerateImagePrompt={() => handleGenerateImagePromptForKey(sceneKey)}
         onRegenerate={() => handleGenImageForKey(sceneKey)}
+        onGenerateVideo={() => handleFlowVideoForKey(sceneKey)}
         onTranslate={(type) => handleTranslateForKey(sceneKey, type)}
         onUpload={(file) => handleUploadImageForKey(sceneKey, file)}
         onDelete={() => handleDeleteImageForKey(sceneKey)}
@@ -1454,6 +1457,7 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
                 handleUploadImageForKey={handleUploadImageForKey}
                 handleDeleteImageForKey={handleDeleteImageForKey}
                 handleTranslateForKey={handleTranslateForKey}
+                handleFlowVideoForKey={handleFlowVideoForKey}
                 language={language}
               />
             ))}

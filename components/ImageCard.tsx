@@ -72,6 +72,7 @@ interface ImageCardProps {
   onGeneratePrompt: () => void;
   onGenerateImagePrompt?: () => void;
   onRegenerate: () => void;
+  onGenerateVideo?: () => void;
   onTranslate: (type: 'image' | 'video') => void;
   onUpload?: (file: File) => void;
   onDelete?: () => void;
@@ -102,6 +103,7 @@ const ImageCard: React.FC<ImageCardProps> = ({
   onGeneratePrompt, 
   onGenerateImagePrompt,
   onRegenerate, 
+  onGenerateVideo,
   onTranslate,
   onUpload,
   onDelete,
@@ -455,6 +457,43 @@ const ImageCard: React.FC<ImageCardProps> = ({
           <span>{videoPrompt.loading ? 'Writing...' : 'Video Prompt'}</span>
         </button>
       </div>
+
+      {/* Video Generation Button */}
+      {onGenerateVideo && videoPrompt.text && (
+        <div className={`px-3 pb-3 ${theme.colors.cardBackground}`}>
+          <button
+            onClick={onGenerateVideo}
+            disabled={imageData.videoLoading || !videoPrompt.text}
+            className={`w-full py-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 uppercase tracking-wider active:scale-95 ${
+              imageData.videoLoading
+                ? 'bg-violet-500/20 text-violet-400 cursor-wait'
+                : imageData.videoUrl
+                  ? 'bg-emerald-600 text-white shadow-lg hover:bg-emerald-700'
+                  : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg hover:scale-[1.02]'
+            }`}
+          >
+            {imageData.videoLoading ? (
+              <><div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" /> Đang tạo video...</>
+            ) : imageData.videoUrl ? (
+              <><span>🎥</span> Tạo lại Video</>
+            ) : (
+              <><span>🎥</span> Tạo Video</>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Video Preview */}
+      {imageData.videoUrl && (
+        <div className={`border-t ${theme.colors.borderLight}`}>
+          <video
+            src={imageData.videoUrl}
+            controls
+            className="w-full aspect-[9/16] bg-black"
+            playsInline
+          />
+        </div>
+      )}
 
       {/* Image Prompt Result Overlay */}
       {imagePrompt?.visible && (
