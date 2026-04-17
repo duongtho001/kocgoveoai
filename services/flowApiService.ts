@@ -37,6 +37,47 @@ const getApiUrl = (): string => {
   return FLOW_API_URL;
 };
 
+/**
+ * Detect if we're running on Vercel (production) and need proxy
+ */
+const isProduction = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+};
+
+/**
+ * Universal fetch wrapper: uses proxy on production, direct on localhost
+ */
+const flowFetch = async (path: string, options: { method?: string; body?: any; json?: boolean } = {}): Promise<Response> => {
+  const { method = 'GET', body, json = true } = options;
+  
+  if (isProduction()) {
+    // Route through Vercel proxy to bypass CORS
+    const proxyBody: any = { method, path };
+    if (body) proxyBody.body = body;
+    
+    const resp = await fetch('/api/flow-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proxyBody),
+    });
+    return resp;
+  } else {
+    // Direct fetch on localhost
+    const API = getApiUrl();
+    const headers: Record<string, string> = {};
+    if (json && body) headers['Content-Type'] = 'application/json';
+    if (FLOW_API_KEY) headers['X-API-Key'] = FLOW_API_KEY;
+    
+    const fetchOptions: RequestInit = { method, headers };
+    if (body && method !== 'GET') {
+      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+    
+    return fetch(`${API}${path}`, fetchOptions);
+  }
+};
+
 const getHeaders = (json: boolean = true): Record<string, string> => {
   const headers: Record<string, string> = {};
   if (json) headers['Content-Type'] = 'application/json';
@@ -48,17 +89,39 @@ const getHeaders = (json: boolean = true): Record<string, string> => {
  * Upload ảnh lên Flow API server
  */
 export const uploadImage = async (file: File): Promise<string> => {
-  const API = getApiUrl();
-  const fd = new FormData();
-  fd.append('file', file);
-  const resp = await fetch(`${API}/api/upload-image`, {
-    method: 'POST',
-    headers: getHeaders(false),
-    body: fd
-  });
-  if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
-  const data = await resp.json();
-  return data.path;
+  if (isProduction()) {
+    // Convert file to base64 for proxy
+    const reader = new FileReader();
+    const dataUrl = await new Promise<string>((resolve) => {
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(file);
+    });
+    const resp = await fetch('/api/flow-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'POST',
+        path: '/api/upload-image',
+        body: { dataUrl, filename: file.name },
+        isFormData: true
+      }),
+    });
+    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return data.path;
+  } else {
+    const API = getApiUrl();
+    const fd = new FormData();
+    fd.append('file', file);
+    const resp = await fetch(`${API}/api/upload-image`, {
+      method: 'POST',
+      headers: getHeaders(false),
+      body: fd
+    });
+    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return data.path;
+  }
 };
 
 /**
@@ -79,7 +142,6 @@ export const waitForJob = async (
   onProgress?: FlowProgressCallback,
   timeoutMs: number = 600000 // 10 phút
 ): Promise<FlowJob> => {
-  const API = getApiUrl();
   const startTime = Date.now();
 
   while (true) {
@@ -87,7 +149,7 @@ export const waitForJob = async (
       throw new Error(`Job ${jobId} timeout sau ${timeoutMs / 1000}s`);
     }
 
-    const resp = await fetch(`${API}/api/jobs/${jobId}`, { headers: getHeaders(false) });
+    const resp = await flowFetch(`/api/jobs/${jobId}`);
     if (!resp.ok) throw new Error(`Poll failed: ${resp.status}`);
     const job: FlowJob = await resp.json();
 
@@ -131,18 +193,15 @@ export const textToImage = async (
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; imageUrls: string[] }> => {
-  const API = getApiUrl();
-
-  const resp = await fetch(`${API}/api/text-to-image`, {
+  const resp = await flowFetch('/api/text-to-image', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       prompts,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
       num_images: options.num_images || 1,
       upscale_quality: options.upscale_quality || '4K',
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`T2I failed: ${resp.status}`);
@@ -168,18 +227,15 @@ export const referenceToImage = async (
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; imageUrls: string[] }> => {
-  const API = getApiUrl();
-
-  const resp = await fetch(`${API}/api/reference-to-image`, {
+  const resp = await flowFetch('/api/reference-to-image', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       prompts,
       reference_images: referenceImages,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
       upscale_quality: options.upscale_quality || '4K',
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`R2I failed: ${resp.status}`);
@@ -204,17 +260,14 @@ export const textToVideo = async (
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
-  const API = getApiUrl();
-
-  const resp = await fetch(`${API}/api/text-to-video`, {
+  const resp = await flowFetch('/api/text-to-video', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       prompts,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_tier: options.model_tier || 'VEO_FLOW',
       video_length_seconds: options.video_length_seconds || 8,
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`T2V failed: ${resp.status}`);
@@ -237,17 +290,14 @@ export const imageToVideo = async (
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
-  const API = getApiUrl();
-
-  const resp = await fetch(`${API}/api/image-to-video`, {
+  const resp = await flowFetch('/api/image-to-video', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       items,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_tier: options.model_tier || 'VEO_FLOW',
       video_length_seconds: options.video_length_seconds || 8,
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`I2V failed: ${resp.status}`);
@@ -269,16 +319,13 @@ export const multiRefVideo = async (
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
-  const API = getApiUrl();
-
-  const resp = await fetch(`${API}/api/multi-ref-video`, {
+  const resp = await flowFetch('/api/multi-ref-video', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       items,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_tier: options.model_tier || 'VEO_FLOW',
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`R2V failed: ${resp.status}`);
