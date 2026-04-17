@@ -65,6 +65,20 @@ interface KocReviewModule2Props {
   language?: string;
 }
 
+/**
+ * Run tasks with limited concurrency (parallel batches of N)
+ */
+const runWithConcurrency = async <T>(
+  items: T[],
+  handler: (item: T) => Promise<void>,
+  concurrency: number = 2
+): Promise<void> => {
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    await Promise.allSettled(batch.map(item => handler(item)));
+  }
+};
+
 const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) => {
   const storageKey = "koc_project_v23_clone_instance";
   const [state, setState] = useState<any>({
@@ -84,6 +98,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     imageStyle: 'Realistic',
     imageQuality: 'normal' as 'normal' | '4K',
     videoVoice: '' as string,
+    batchConcurrency: 2,
     sceneCount: 5,
     productFiles: [], 
     productPreviewUrls: [],
@@ -775,9 +790,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
 
   const handleBulkImage = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGenImageForKey(key);
-    }
+    await runWithConcurrency(keys, handleGenImageForKey, state.batchConcurrency);
   };
 
   const handleGeneratePromptForKey = async (key: string) => {
@@ -816,16 +829,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
 
   const handleBulkImagePrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGenerateImagePromptForKey(key);
-    }
+    await runWithConcurrency(keys, handleGenerateImagePromptForKey, state.batchConcurrency);
   };
 
   const handleBulkPrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGeneratePromptForKey(key);
-    }
+    await runWithConcurrency(keys, handleGeneratePromptForKey, state.batchConcurrency);
   };
 
   // Flow API: Tạo video cho từng cảnh
@@ -873,13 +882,9 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
 
   // Bulk: Tạo tất cả video (luôn I2V từ ảnh)
   const handleBulkVideo = async () => {
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      if (abortRef.current) break;
-      if (state.videoPrompts[key]?.text && state.images[key]?.url) {
-        await handleFlowVideoForKey(key);
-      }
-    }
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
+      .filter(key => state.videoPrompts[key]?.text && state.images[key]?.url);
+    await runWithConcurrency(keys, handleFlowVideoForKey, state.batchConcurrency);
   };
 
   // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ với nút Stop
@@ -1277,6 +1282,20 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                       </button>
                     ) : null;
                   })()}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">⚡ Luồng song song</label>
+                <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  {[1, 2, 3, 5].map(n => (
+                    <button
+                      key={n}
+                      onClick={() => setState(p => ({ ...p, batchConcurrency: n }))}
+                      className={`flex-1 py-2 text-[10px] font-black rounded-lg transition-all ${state.batchConcurrency === n ? 'text-white shadow-md bg-sky-600' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      {n}x
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
