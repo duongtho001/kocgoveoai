@@ -811,6 +811,22 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     }));
 
     try {
+      // Auto-sync concurrency settings to Flow API server (silent, non-blocking)
+      try {
+        if (flowApi.isFlowApiAvailable()) {
+          const { imageConcurrency, videoConcurrency } = getConcurrencySettings();
+          await flowApi.updateFlowServerConcurrency({
+            default_image_concurrency: imageConcurrency,
+            default_video_concurrency: videoConcurrency,
+            public_image_concurrency: imageConcurrency,
+            public_video_concurrency: videoConcurrency,
+          });
+          console.log(`[AutoSync] ✅ Server synced: image=${imageConcurrency}, video=${videoConcurrency}`);
+        }
+      } catch (syncErr) {
+        console.warn('[AutoSync] Server sync failed (non-blocking):', syncErr);
+      }
+
       let imageParts = [];
       if (hasFiles) {
         imageParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
@@ -1281,6 +1297,22 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       });
 
       setState((p: any) => ({ ...p, script: null, images: initialImages, imagePrompts: initialImagePrompts, videoPrompts: initialPrompts }));
+
+      // Auto-sync concurrency settings to Flow API server
+      try {
+        if (flowApi.isFlowApiAvailable()) {
+          const { imageConcurrency, videoConcurrency } = getConcurrencySettings();
+          await flowApi.updateFlowServerConcurrency({
+            default_image_concurrency: imageConcurrency,
+            default_video_concurrency: videoConcurrency,
+            public_image_concurrency: imageConcurrency,
+            public_video_concurrency: videoConcurrency,
+          });
+          console.log(`[FullPipeline AutoSync] ✅ Server synced: image=${imageConcurrency}, video=${videoConcurrency}`);
+        }
+      } catch (syncErr) {
+        console.warn('[FullPipeline AutoSync] Server sync failed (non-blocking):', syncErr);
+      }
 
       // ══════════════════════════════════════════════════════
       // STEP 1: Tạo Kịch Bản (Script)
