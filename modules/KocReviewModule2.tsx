@@ -139,16 +139,29 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         if (parsed && typeof parsed === 'object') {
           const safeSceneCount = typeof parsed.sceneCount === 'object' ? (parsed.sceneCount.count || 5) : (parsed.sceneCount || 5);
           
+          // Filter out stale blob: URLs that won't work after page reload
+          const cleanPreviewUrls = (parsed.productPreviewUrls || []).filter(
+            (url: string) => url && !url.startsWith('blob:') && url.startsWith('data:')
+          );
+          const cleanFaceUrl = (parsed.facePreviewUrl && parsed.facePreviewUrl.startsWith('data:')) ? parsed.facePreviewUrl : null;
+          const cleanOutfitUrl = (parsed.outfitPreviewUrl && parsed.outfitPreviewUrl.startsWith('data:')) ? parsed.outfitPreviewUrl : null;
+          const cleanBgUrl = (parsed.backgroundPreviewUrl && parsed.backgroundPreviewUrl.startsWith('data:')) ? parsed.backgroundPreviewUrl : null;
+          
           setState((prev: any) => ({
             ...prev,
             ...parsed,
             sceneCount: safeSceneCount,
             productFiles: [],
+            productPreviewUrls: cleanPreviewUrls,
             faceFile: null,
+            facePreviewUrl: cleanFaceUrl,
             outfitFile: null,
+            outfitPreviewUrl: cleanOutfitUrl,
             backgroundFile: null,
+            backgroundPreviewUrl: cleanBgUrl,
             isGeneratingScript: false,
             isExtractingOutfit: false,
+            isFullWorkflowRunning: false,
             isRegeneratingPart: {},
             imagePrompts: parsed.imagePrompts || {}
           }));
@@ -546,10 +559,19 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       if (state.productFiles.length > 0) {
         imageParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
       } else {
-        imageParts = state.productPreviewUrls.map((url: string) => ({
-          mimeType: 'image/png',
-          data: url.split(',')[1]
-        }));
+        // Only use data: URLs, skip invalid/empty ones
+        imageParts = state.productPreviewUrls
+          .filter((url: string) => url && url.startsWith('data:') && url.includes(','))
+          .map((url: string) => ({
+            mimeType: 'image/png',
+            data: url.split(',')[1]
+          }));
+      }
+
+      if (imageParts.length === 0) {
+        alert('Ảnh sản phẩm không hợp lệ. Vui lòng tải lại ảnh.');
+        setState((prev: any) => ({ ...prev, isGeneratingScript: false }));
+        return;
       }
 
       let layoutToUse = state.scriptLayout;
@@ -575,8 +597,9 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         language
       );
       setState((prev: any) => ({ ...prev, script, scriptLayout: layoutToUse }));
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error('Script generation error:', e);
+      alert(`Lỗi tạo kịch bản: ${e?.message || 'Vui lòng thử lại'}`);
     } finally {
       setState((prev: any) => ({ ...prev, isGeneratingScript: false }));
     }
