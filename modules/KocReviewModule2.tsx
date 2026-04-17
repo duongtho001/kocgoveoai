@@ -1074,10 +1074,143 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
   const handleBulkImage = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
     const { imageConcurrency } = getConcurrencySettings();
-    await runBatch(
-      keys.map(key => ({ key, fn: () => handleGenImageForKey(key) })),
-      imageConcurrency
-    );
+    
+    // Mark all images as loading
+    setState((prev: any) => {
+      const newImages = { ...prev.images };
+      keys.forEach(k => { newImages[k] = { ...newImages[k], loading: true }; });
+      return { ...prev, images: newImages };
+    });
+
+    try {
+      // Step 1: Prepare shared reference parts (shared across all scenes)
+      const getPart = async (url: string | null) => {
+        if (!url) return null;
+        if (url.startsWith('data:')) return { mimeType: 'image/png', data: url.split(',')[1] };
+        try {
+          const res = await fetch(url);
+          const blob = await res.blob();
+          return new Promise<any>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve({ mimeType: blob.type, data: (reader.result as string).split(',')[1] });
+            reader.readAsDataURL(blob);
+          });
+        } catch { return null; }
+      };
+
+      // Collect reference images ONCE
+      const refDataUrls: string[] = [];
+      
+      // Product images
+      const productParts = state.productFiles.length > 0
+        ? await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)))
+        : await Promise.all((state.productPreviewUrls || []).map((url: string) => getPart(url)));
+      for (const part of productParts) {
+        if (part?.data) refDataUrls.push(`data:${part.mimeType || 'image/png'};base64,${part.data}`);
+      }
+      
+      // Face image
+      const facePart = await getPart(state.facePreviewUrl);
+      const imageFormat = state.images?.v1?.format || '';
+      if (imageFormat !== 'no_character' && imageFormat !== 'hands_only' && imageFormat !== 'legs_only') {
+        if (facePart?.data) refDataUrls.push(`data:${facePart.mimeType || 'image/png'};base64,${facePart.data}`);
+      }
+      
+      // Outfit image
+      const outfitPart = await getPart(state.processedOutfitUrl || state.outfitPreviewUrl);
+      if (imageFormat !== 'no_character' && outfitPart?.data) {
+        refDataUrls.push(`data:${outfitPart.mimeType || 'image/png'};base64,${outfitPart.data}`);
+      }
+      
+      // Background
+      const bgPart = await getPart(state.backgroundPreviewUrl);
+      if (bgPart?.data) refDataUrls.push(`data:${bgPart.mimeType || 'image/png'};base64,${bgPart.data}`);
+
+      console.log(`[BulkImage] Refs collected: ${refDataUrls.length}`);
+
+      // Step 2: Generate all image prompts via Gemini AI (parallel)
+      const promptResults = await Promise.allSettled(
+        keys.map(async (key) => {
+          const poseLabel = KOC_POSES.find(p => p.value === state.images[key]?.pose)?.label || '';
+          const keyFormat = state.images[key]?.format || '';
+          
+          // Use existing image prompt if available, else generate new
+          if (state.imagePrompts[key]?.text && state.imagePrompts[key].text.length > 20) {
+            return { key, prompt: state.imagePrompts[key].text };
+          }
+          
+          const prompt = service.constructKocImagePrompt(
+            state.productName,
+            state.script[key],
+            state.characterDescription,
+            state.images[key]?.customPrompt,
+            state.gender,
+            state.imageStyle,
+            state.scriptNote,
+            state.visualNote,
+            poseLabel,
+            keyFormat,
+            !!facePart,
+            !!outfitPart,
+            !!bgPart,
+            language
+          );
+          return { key, prompt };
+        })
+      );
+
+      const batchItems: { key: string; prompt: string }[] = [];
+      for (const r of promptResults) {
+        if (r.status === 'fulfilled' && r.value) {
+          batchItems.push(r.value);
+        }
+      }
+
+      if (batchItems.length === 0) {
+        throw new Error('Không tạo được prompt cho scene nào');
+      }
+
+      console.log(`[BulkImage] Generated ${batchItems.length} prompts, sending batch R2I/T2I...`);
+
+      // Step 3: Send ALL prompts in 1 request with max_concurrency
+      const results = await service.generateKocImageBatch(
+        batchItems,
+        refDataUrls,
+        imageConcurrency,
+        state.imageQuality || 'normal'
+      );
+
+      // Step 4: Update state with results
+      setState((prev: any) => {
+        const newImages = { ...prev.images };
+        for (const result of results) {
+          if (result.url) {
+            newImages[result.key] = { ...newImages[result.key], url: result.url, loading: false };
+          } else {
+            newImages[result.key] = { ...newImages[result.key], loading: false, error: 'No image returned' };
+          }
+        }
+        // Mark any remaining keys as not loading
+        keys.forEach(k => {
+          if (newImages[k]?.loading) {
+            newImages[k] = { ...newImages[k], loading: false };
+          }
+        });
+        return { ...prev, images: newImages };
+      });
+
+      console.log(`[BulkImage] ✅ Batch complete: ${results.filter(r => r.url).length}/${batchItems.length} images`);
+
+    } catch (e: any) {
+      console.error('[BulkImage] Batch failed:', e);
+      alert(`Lỗi tạo ảnh batch: ${e.message}`);
+      // Reset loading states
+      setState((prev: any) => {
+        const newImages = { ...prev.images };
+        keys.forEach(k => { newImages[k] = { ...newImages[k], loading: false }; });
+        return { ...prev, images: newImages };
+      });
+    }
   };
 
   // ═══════════ Generate Video for single key (Flow API) ═══════════

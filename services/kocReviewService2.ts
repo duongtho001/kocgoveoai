@@ -559,6 +559,84 @@ export const generateKocImage = async (
 };
 
 /**
+ * Batch Image Generation — gửi TẤT CẢ prompts trong 1 request để server chạy song song.
+ * Server dùng max_concurrency để kiểm soát số luồng chạy đồng thời.
+ * 
+ * @param items Array of { key, prompt, refDataUrls } — mỗi item = 1 scene
+ * @param maxConcurrency Số prompt chạy song song trên server
+ * @param onImageReady Callback khi từng ảnh được trả về (để UI update real-time)
+ */
+export const generateKocImageBatch = async (
+  items: { key: string; prompt: string }[],
+  refDataUrls: string[], // shared refs (product + face + outfit + bg) — upload 1 lần
+  maxConcurrency: number = 2,
+  imageQuality: 'normal' | '4K' = 'normal',
+  onProgress?: (jobInfo: any) => void
+): Promise<{ key: string; url: string }[]> => {
+  if (items.length === 0) return [];
+  
+  const upscaleOpt = imageQuality === '4K' ? '4K' : undefined;
+  const allPrompts = items.map(item => item.prompt);
+  
+  console.log(`[BatchImage] Sending ${allPrompts.length} prompts, ${refDataUrls.length} refs, concurrency=${maxConcurrency}`);
+
+  // Try R2I first (with references)
+  if (refDataUrls.length > 0) {
+    try {
+      // Upload all reference images ONCE
+      const uploadedPaths: string[] = [];
+      for (let i = 0; i < refDataUrls.length; i++) {
+        const path = await flowApi.uploadBase64Image(refDataUrls[i], `ref_batch_${i}.png`);
+        uploadedPaths.push(path);
+      }
+      
+      const result = await flowApi.referenceToImage(
+        allPrompts,
+        uploadedPaths,
+        { 
+          aspect_ratio: '9:16', 
+          upscale_quality: upscaleOpt,
+          max_concurrency: maxConcurrency 
+        },
+        onProgress
+      );
+      
+      if (result.imageUrls && result.imageUrls.length > 0) {
+        console.log(`[BatchImage] ✅ R2I returned ${result.imageUrls.length} images`);
+        return items.map((item, i) => ({
+          key: item.key,
+          url: result.imageUrls[i] || ''
+        }));
+      }
+    } catch (r2iError) {
+      console.warn('[BatchImage] R2I batch failed, falling back to T2I:', r2iError);
+    }
+  }
+  
+  // Fallback: T2I batch (no references)
+  console.log(`[BatchImage] T2I batch ${allPrompts.length} prompts, concurrency=${maxConcurrency}`);
+  const result = await flowApi.textToImage(
+    allPrompts,
+    { 
+      aspect_ratio: '9:16', 
+      upscale_quality: upscaleOpt,
+      max_concurrency: maxConcurrency 
+    },
+    onProgress
+  );
+  
+  if (result.imageUrls && result.imageUrls.length > 0) {
+    console.log(`[BatchImage] ✅ T2I returned ${result.imageUrls.length} images`);
+    return items.map((item, i) => ({
+      key: item.key,
+      url: result.imageUrls[i] || ''
+    }));
+  }
+  
+  throw new Error('Flow API: không tạo được ảnh batch');
+};
+
+/**
  * Tạo lời nhắc video cho mô hình VEO-3 dựa trên kịch bản và bối cảnh thị giác.
  */
 export const generateKocVeoPrompt = async (

@@ -324,9 +324,14 @@ export const textToImage = async (
   const job = await waitForJob(job_id, onProgress);
   
   // On production, fetch blob URLs via proxy; on localhost, use direct URLs
+  const images = job.images || [];
+  if (images.length === 0) {
+    console.warn(`[T2I] Job ${job_id} completed but no images returned`);
+    return { jobId: job_id, imageUrls: [] };
+  }
   const imageUrls = isProduction()
-    ? await Promise.all(job.images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
-    : job.images.map((_, i) => getImageUrl(job_id, i));
+    ? await Promise.all(images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
+    : images.map((_, i) => getImageUrl(job_id, i));
 
   return { jobId: job_id, imageUrls };
 };
@@ -363,9 +368,14 @@ export const referenceToImage = async (
 
   const job = await waitForJob(job_id, onProgress);
   
+  const images = job.images || [];
+  if (images.length === 0) {
+    console.warn(`[R2I] Job ${job_id} completed but no images returned`);
+    return { jobId: job_id, imageUrls: [] };
+  }
   const imageUrls = isProduction()
-    ? await Promise.all(job.images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
-    : job.images.map((_, i) => getImageUrl(job_id, i));
+    ? await Promise.all(images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
+    : images.map((_, i) => getImageUrl(job_id, i));
 
   return { jobId: job_id, imageUrls };
 };
