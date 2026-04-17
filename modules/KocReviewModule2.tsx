@@ -7,6 +7,7 @@ import * as flowApi from '../services/flowApiService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import VideoGallery from '../components/VideoGallery';
+import MultiProductBar, { ProductTab } from '../components/MultiProductBar';
 import { HOOK_LAYOUTS } from '../components/45hook';
 import { copyToClipboard } from '../utils/clipboard';
 import { theme } from '../constants/colors';
@@ -71,7 +72,28 @@ interface KocReviewModule2Props {
 }
 
 const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', loggedInUser, userQuota, onQuotaChange }) => {
-  const storageKey = "koc_project_v23_clone_instance";
+  // ── Multi-Product Management ──
+  const PRODUCTS_LIST_KEY = 'koc_multi_products_list';
+  const GLOBAL_SETTINGS_KEY = 'koc_global_settings';
+  
+  const initProducts = (): ProductTab[] => {
+    try {
+      const saved = localStorage.getItem(PRODUCTS_LIST_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [{ id: 'default', name: 'SP 1', keyword: '', scriptTone: '', productSize: '', scriptNote: '', productPreviewUrls: [], status: 'draft' }];
+  };
+  
+  const [products, setProducts] = useState<ProductTab[]>(initProducts);
+  const [activeProductId, setActiveProductId] = useState<string>(() => {
+    try { return localStorage.getItem('koc_active_product_id') || products[0]?.id || 'default'; } catch { return 'default'; }
+  });
+  
+  const getStorageKeyForProduct = (productId: string) => `koc_project_product_${productId}`;
+  const storageKey = getStorageKeyForProduct(activeProductId);
   const [state, setState] = useState<any>({
     faceFile: null,
     facePreviewUrl: null,
@@ -134,6 +156,15 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
 
   useEffect(() => {
     try {
+      // Migration: move old state to new product-specific key
+      const OLD_KEY = 'koc_project_v23_clone_instance';
+      const oldSaved = localStorage.getItem(OLD_KEY);
+      if (oldSaved && !localStorage.getItem(getStorageKeyForProduct('default'))) {
+        localStorage.setItem(getStorageKeyForProduct('default'), oldSaved);
+        localStorage.removeItem(OLD_KEY);
+        console.log('[KOC] Migrated old state → product default');
+      }
+
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -177,6 +208,147 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     const { isGeneratingScript, isExtractingOutfit, isRegeneratingPart, productFiles, faceFile, outfitFile, backgroundFile, ...persistentData } = state;
     safeSaveToLocalStorage(storageKey, persistentData);
   }, [state]);
+
+  // Save products list when it changes
+  useEffect(() => {
+    try { localStorage.setItem(PRODUCTS_LIST_KEY, JSON.stringify(products)); } catch {}
+  }, [products]);
+  
+  useEffect(() => {
+    try { localStorage.setItem('koc_active_product_id', activeProductId); } catch {}
+  }, [activeProductId]);
+
+  // ── Multi-product handlers ──
+  const handleSwitchProduct = (newProductId: string) => {
+    if (newProductId === activeProductId) return;
+    // Save current state to current product key
+    const { isGeneratingScript, isExtractingOutfit, isRegeneratingPart, productFiles, faceFile, outfitFile, backgroundFile, ...persistentData } = state;
+    safeSaveToLocalStorage(getStorageKeyForProduct(activeProductId), persistentData);
+    
+    // Update product status in list
+    setProducts(prev => prev.map(p => {
+      if (p.id === activeProductId) {
+        return { ...p, name: state.productName || p.name, keyword: state.keyword || p.keyword };
+      }
+      return p;
+    }));
+    
+    setActiveProductId(newProductId);
+    
+    // Load new product state
+    try {
+      const saved = localStorage.getItem(getStorageKeyForProduct(newProductId));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          const safeSceneCount = typeof parsed.sceneCount === 'object' ? (parsed.sceneCount.count || 5) : (parsed.sceneCount || 5);
+          const cleanPreviewUrls = (parsed.productPreviewUrls || []).filter(
+            (url: string) => url && !url.startsWith('blob:') && url.startsWith('data:')
+          );
+          // Keep shared settings (face, voice, character) from current state
+          setState((prev: any) => ({
+            ...prev,
+            ...parsed,
+            sceneCount: safeSceneCount,
+            productFiles: [],
+            productPreviewUrls: cleanPreviewUrls,
+            // KEEP global shared settings
+            faceFile: prev.faceFile,
+            facePreviewUrl: prev.facePreviewUrl,
+            outfitFile: prev.outfitFile,
+            outfitPreviewUrl: prev.outfitPreviewUrl,
+            backgroundFile: prev.backgroundFile,
+            backgroundPreviewUrl: prev.backgroundPreviewUrl,
+            characterDescription: prev.characterDescription,
+            gender: prev.gender,
+            voice: prev.voice,
+            addressing: prev.addressing,
+            flowVoice: prev.flowVoice,
+            imageStyle: prev.imageStyle,
+            imageQuality: prev.imageQuality,
+            // Reset loading states
+            isGeneratingScript: false,
+            isExtractingOutfit: false,
+            isFullWorkflowRunning: false,
+            isRegeneratingPart: {},
+          }));
+          return;
+        }
+      }
+    } catch {}
+    
+    // New product — blank state but keep shared settings
+    const newProduct = products.find(p => p.id === newProductId);
+    setState((prev: any) => ({
+      ...prev,
+      productName: newProduct?.name || '',
+      keyword: newProduct?.keyword || '',
+      scriptTone: newProduct?.scriptTone || prev.scriptTone,
+      productSize: newProduct?.productSize || '',
+      scriptNote: newProduct?.scriptNote || '',
+      productFiles: [],
+      productPreviewUrls: [],
+      script: null,
+      images: {},
+      imagePrompts: {},
+      videoPrompts: {},
+      isGeneratingScript: false,
+      isFullWorkflowRunning: false,
+    }));
+  };
+
+  const handleAddProduct = (partial: Partial<ProductTab>) => {
+    const id = `product_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newProduct: ProductTab = {
+      id,
+      name: partial.name || `SP ${products.length + 1}`,
+      keyword: partial.keyword || '',
+      scriptTone: partial.scriptTone || '',
+      productSize: partial.productSize || '',
+      scriptNote: partial.scriptNote || '',
+      productPreviewUrls: partial.productPreviewUrls || [],
+      status: 'draft',
+    };
+    setProducts(prev => [...prev, newProduct]);
+    // Auto-switch to new product
+    handleSwitchProduct(id);
+  };
+
+  const handleRemoveProduct = (id: string) => {
+    if (products.length <= 1) return;
+    if (!confirm('Xóa sản phẩm này?')) return;
+    setProducts(prev => prev.filter(p => p.id !== id));
+    try { localStorage.removeItem(getStorageKeyForProduct(id)); } catch {}
+    if (id === activeProductId) {
+      const remaining = products.filter(p => p.id !== id);
+      if (remaining.length > 0) handleSwitchProduct(remaining[0].id);
+    }
+  };
+
+  const handleImportCSV = (imported: Partial<ProductTab>[]) => {
+    const newProducts: ProductTab[] = imported.map((p, i) => ({
+      id: `csv_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      name: p.name || `SP Import ${i + 1}`,
+      keyword: p.keyword || '',
+      scriptTone: p.scriptTone || '',
+      productSize: p.productSize || '',
+      scriptNote: p.scriptNote || '',
+      productPreviewUrls: [],
+      status: 'draft' as const,
+    }));
+    setProducts(prev => [...prev, ...newProducts]);
+    // Switch to first imported product
+    if (newProducts.length > 0) {
+      handleSwitchProduct(newProducts[0].id);
+    }
+  };
+
+  const handleRenameProduct = (id: string, name: string) => {
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, name } : p));
+    if (id === activeProductId) {
+      setState((prev: any) => ({ ...prev, productName: name }));
+    }
+  };
 
   useEffect(() => {
     const handleExport = async () => {
@@ -1189,6 +1361,18 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         }
       ` }} />
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-8">
+        {/* ═══ Multi-Product Tab Bar ═══ */}
+        <div className="mb-6">
+          <MultiProductBar
+            products={products}
+            activeProductId={activeProductId}
+            onSwitch={handleSwitchProduct}
+            onAdd={handleAddProduct}
+            onRemove={handleRemoveProduct}
+            onImportCSV={handleImportCSV}
+            onRename={handleRenameProduct}
+          />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
           <div className="md:col-span-5 flex flex-col gap-4">
             <div className="space-y-3">
