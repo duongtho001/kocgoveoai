@@ -66,6 +66,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     addressing: '',
     targetAudience: '',
     imageStyle: 'Realistic',
+    imageQuality: 'normal' as 'normal' | '4K',
     sceneCount: 5,
     productFiles: [], 
     productPreviewUrls: [],
@@ -720,7 +721,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
         poseLabel,
         bgRefPart,
         currentFormat,
-        language
+        language,
+        state.imageQuality
       );
       setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url, loading: false } } }));
     } catch (e) {
@@ -1211,6 +1213,23 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                     style={state.imageStyle === '3D' ? { backgroundColor: 'var(--primary-color)' } : {}}
                   >
                     3D Animation
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Chất lượng ảnh</label>
+                <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  <button
+                    onClick={() => setState(p => ({ ...p, imageQuality: 'normal' as any }))}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === 'normal' ? 'text-white shadow-md bg-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    ⚡ Nhanh
+                  </button>
+                  <button
+                    onClick={() => setState(p => ({ ...p, imageQuality: '4K' as any }))}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === '4K' ? 'text-white shadow-md bg-violet-600' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    🔥 4K Upscale
                   </button>
                 </div>
               </div>

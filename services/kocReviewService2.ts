@@ -439,7 +439,8 @@ export const generateKocImage = async (
   poseLabel: string = "",
   backgroundReferencePart: any | null = null,
   imageFormat: string = "",
-  language: string = "vi"
+  language: string = "vi",
+  imageQuality: 'normal' | '4K' = 'normal'
 ): Promise<string> => {
   const prompt = constructKocImagePrompt(
     productName, scriptPart, characterDescription, userCustomPrompt,
@@ -447,31 +448,44 @@ export const generateKocImage = async (
     !!faceImagePart, !!outfitImagePart, !!backgroundReferencePart, language
   );
 
-  // Collect all reference images (base64 data parts)
+  const upscaleOpt = imageQuality === '4K' ? '4K' : undefined;
+
+  // Collect reference images based on imageFormat
+  // - "" (CÓ KOC): ALL refs (product + face + outfit + background)
+  // - "no_character" (CHỈ SẢN PHẨM): product + background only
+  // - "hands_only" (BÀN TAY): product + outfit + background (no face)
+  // - "legs_only" (CẬN CHÂN): product + outfit + background (no face)
   const refDataUrls: string[] = [];
   
-  // Product images
+  // Product images — always included
   for (const part of referenceImageParts) {
     if (part?.data) {
       refDataUrls.push(`data:${part.mimeType || 'image/png'};base64,${part.data}`);
     }
   }
-  // Face image
-  if (faceImagePart?.data) {
-    refDataUrls.push(`data:${faceImagePart.mimeType || 'image/png'};base64,${faceImagePart.data}`);
+  
+  // Face image — only when format includes character (default "")
+  if (imageFormat !== 'no_character' && imageFormat !== 'hands_only' && imageFormat !== 'legs_only') {
+    if (faceImagePart?.data) {
+      refDataUrls.push(`data:${faceImagePart.mimeType || 'image/png'};base64,${faceImagePart.data}`);
+    }
   }
-  // Outfit image
-  if (outfitImagePart?.data) {
-    refDataUrls.push(`data:${outfitImagePart.mimeType || 'image/png'};base64,${outfitImagePart.data}`);
+  
+  // Outfit image — when character/hands/legs (not "no_character")
+  if (imageFormat !== 'no_character') {
+    if (outfitImagePart?.data) {
+      refDataUrls.push(`data:${outfitImagePart.mimeType || 'image/png'};base64,${outfitImagePart.data}`);
+    }
   }
-  // Background reference
+  
+  // Background reference — always included
   if (backgroundReferencePart?.data) {
     refDataUrls.push(`data:${backgroundReferencePart.mimeType || 'image/png'};base64,${backgroundReferencePart.data}`);
   }
 
   // If we have reference images, use R2I (Reference to Image)
   if (refDataUrls.length > 0) {
-    console.log(`[KocService2] Flow API R2I 9:16 (${refDataUrls.length} refs)`);
+    console.log(`[KocService2] Flow API R2I 9:16 (${refDataUrls.length} refs) quality=${imageQuality}`);
     try {
       // Upload all reference images
       const uploadedPaths: string[] = [];
@@ -483,7 +497,7 @@ export const generateKocImage = async (
       const result = await flowApi.referenceToImage(
         [prompt],
         uploadedPaths,
-        { aspect_ratio: '9:16' }
+        { aspect_ratio: '9:16', upscale_quality: upscaleOpt }
       );
       if (result.imageUrls && result.imageUrls.length > 0) {
         return result.imageUrls[0];
@@ -494,8 +508,8 @@ export const generateKocImage = async (
   }
   
   // Fallback: T2I (no references)
-  console.log(`[KocService2] Flow API T2I 9:16`);
-  const result = await flowApi.textToImage([prompt], { aspect_ratio: '9:16' });
+  console.log(`[KocService2] Flow API T2I 9:16 quality=${imageQuality}`);
+  const result = await flowApi.textToImage([prompt], { aspect_ratio: '9:16', upscale_quality: upscaleOpt });
   if (result.imageUrls && result.imageUrls.length > 0) {
     return result.imageUrls[0];
   }
