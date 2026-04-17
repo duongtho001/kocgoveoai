@@ -850,6 +850,46 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     }
   };
 
+  // Bulk: Tạo tất cả video
+  const handleBulkVideo = async () => {
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+    for (const key of keys) {
+      if (state.videoPrompts[key]?.text) {
+        await handleFlowVideoForKey(key);
+      }
+    }
+  };
+
+  // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ
+  const [autoRunning, setAutoRunning] = useState(false);
+  const handleAutoProject = async () => {
+    if (autoRunning) return;
+    setAutoRunning(true);
+    try {
+      // Step 1: Tạo Prompt Ảnh cho tất cả
+      console.log('[AutoProject] Step 1/4: Tạo Prompt Ảnh...');
+      await handleBulkImagePrompt();
+      
+      // Step 2: Tạo Ảnh cho tất cả
+      console.log('[AutoProject] Step 2/4: Tạo Ảnh...');
+      await handleBulkImage();
+      
+      // Step 3: Tạo Video Prompt cho tất cả
+      console.log('[AutoProject] Step 3/4: Tạo Video Prompt...');
+      await handleBulkPrompt();
+      
+      // Step 4: Tạo Video cho tất cả
+      console.log('[AutoProject] Step 4/4: Tạo Video...');
+      await handleBulkVideo();
+      
+      console.log('[AutoProject] ✅ Hoàn tất!');
+    } catch (e) {
+      console.error('[AutoProject] Lỗi:', e);
+    } finally {
+      setAutoRunning(false);
+    }
+  };
+
   const downloadAllImages = async () => {
     if (typeof JSZip === 'undefined') {
       alert("Đang tải thư viện nén, vui lòng thử lại sau giây lát.");
@@ -1279,6 +1319,25 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
           </div>
 
           <div className="flex flex-col items-center gap-12 py-12">
+            {/* NÚT DỰ ÁN TỰ ĐỘNG */}
+            <div className="w-full px-4">
+              <button
+                onClick={handleAutoProject}
+                disabled={autoRunning}
+                className={`w-full py-5 text-white font-black rounded-2xl shadow-2xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
+                  autoRunning
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 cursor-wait animate-pulse'
+                    : 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:scale-[1.02] active:scale-95'
+                }`}
+              >
+                {autoRunning ? (
+                  <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> ĐANG CHẠY TỰ ĐỘNG...</>
+                ) : (
+                  <>🚀 DỰ ÁN TỰ ĐỘNG (Prompt → Ảnh → Video Prompt → Video)</>
+                )}
+              </button>
+            </div>
+
             <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
               <button
                 onClick={handleBulkImage}
@@ -1303,6 +1362,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
               >
                 Tạo tất cả Prompt video
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>
+              </button>
+              <button
+                onClick={handleBulkVideo}
+                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest bg-gradient-to-r from-violet-600 to-fuchsia-600"
+              >
+                🎥 Tạo tất cả Video
               </button>
             </div>
 
