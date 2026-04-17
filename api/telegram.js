@@ -48,7 +48,8 @@ export default async function handler(req, res) {
 
     const chatId = message.chat.id;
     const telegramId = message.from.id;
-    const text = message.text.trim();
+    // Strip @botname suffix from commands (e.g., /register@koc_bot → /register)
+    const text = message.text.trim().replace(/@\w+/, '');
 
     if (text === '/start') {
       await sendMessage(chatId,
@@ -72,9 +73,9 @@ export default async function handler(req, res) {
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/register ')) {
+    if (text === '/register' || text.startsWith('/register ')) {
       const parts = text.split(/\s+/);
-      if (parts.length < 3) { await sendMessage(chatId, '❌ Sử dụng: /register &lt;username&gt; &lt;password&gt;'); return res.json({ ok: true }); }
+      if (parts.length < 3) { await sendMessage(chatId, '❌ Sử dụng: /register &lt;username&gt; &lt;password&gt;\n\nVD: /register nguyen123 matkhau456'); return res.json({ ok: true }); }
       const { data: existing } = await supabase.from('users').select('id').eq('username', parts[1]).single();
       if (existing) { await sendMessage(chatId, '❌ Username đã tồn tại!'); return res.json({ ok: true }); }
       const { data: creditsSetting } = await supabase.from('app_settings').select('value').eq('key', 'default_credits').single();
@@ -108,10 +109,10 @@ export default async function handler(req, res) {
     }
 
     // Admin commands
-    if (text.startsWith('/adduser ')) {
+    if (text === '/adduser' || text.startsWith('/adduser ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
       const parts = text.split(/\s+/);
-      if (parts.length < 3) { await sendMessage(chatId, '❌ /adduser &lt;username&gt; &lt;password&gt;'); return res.json({ ok: true }); }
+      if (parts.length < 3) { await sendMessage(chatId, '❌ /adduser &lt;username&gt; &lt;password&gt;\n\nVD: /adduser nguyen123 matkhau456'); return res.json({ ok: true }); }
       const { data: creditsSetting } = await supabase.from('app_settings').select('value').eq('key', 'default_credits').single();
       const { data: newUser, error } = await supabase.from('users').insert({ username: parts[1], password: parts[2], credits: creditsSetting ? parseInt(creditsSetting.value) : 100 }).select().single();
       if (error) { await sendMessage(chatId, `❌ ${error.message}`); }
@@ -121,66 +122,75 @@ export default async function handler(req, res) {
 
     if (text === '/users') {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
-      const { data: users } = await supabase.from('users').select('username, status, credits, role').order('created_at', { ascending: false }).limit(50);
+      const { data: users } = await supabase.from('users').select('username, status, credits, role, image_quota, video_quota, images_used, videos_used').order('created_at', { ascending: false }).limit(50);
       if (!users?.length) { await sendMessage(chatId, '📋 Chưa có user nào.'); }
       else {
         let msg = `📋 <b>Users (${users.length})</b>\n\n`;
-        users.forEach((u, i) => { msg += `${i+1}. ${u.status === 'active' ? '✅' : '🚫'}${u.role === 'admin' ? '👑' : '👤'} <b>${u.username}</b> — 💰${u.credits}\n`; });
+        users.forEach((u, i) => { msg += `${i+1}. ${u.status === 'active' ? '✅' : '🚫'}${u.role === 'admin' ? '👑' : '👤'} <b>${u.username}</b> — 📷${u.images_used||0}/${u.image_quota||50} 🎥${u.videos_used||0}/${u.video_quota||20}\n`; });
         await sendMessage(chatId, msg);
       }
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/setcredits ')) {
+    if (text === '/setcredits' || text.startsWith('/setcredits ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
       const parts = text.split(/\s+/);
-      if (parts.length < 3) { await sendMessage(chatId, '❌ /setcredits &lt;username&gt; &lt;amount&gt;'); return res.json({ ok: true }); }
+      if (parts.length < 3) { await sendMessage(chatId, '❌ /setcredits &lt;username&gt; &lt;amount&gt;\n\nVD: /setcredits nguyen123 200'); return res.json({ ok: true }); }
       await supabase.from('users').update({ credits: parseInt(parts[2]) }).eq('username', parts[1]);
       await sendMessage(chatId, `✅ ${parts[1]} = ${parts[2]} credits.`);
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/ban ')) {
+    if (text === '/ban' || text.startsWith('/ban ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
-      await supabase.from('users').update({ status: 'suspended' }).eq('username', text.split(/\s+/)[1]);
-      await sendMessage(chatId, `🚫 Đã khóa: ${text.split(/\s+/)[1]}`);
+      const username = text.split(/\s+/)[1];
+      if (!username) { await sendMessage(chatId, '❌ /ban &lt;username&gt;'); return res.json({ ok: true }); }
+      await supabase.from('users').update({ status: 'suspended' }).eq('username', username);
+      await sendMessage(chatId, `🚫 Đã khóa: ${username}`);
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/unban ')) {
+    if (text === '/unban' || text.startsWith('/unban ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
-      await supabase.from('users').update({ status: 'active' }).eq('username', text.split(/\s+/)[1]);
-      await sendMessage(chatId, `✅ Đã mở khóa: ${text.split(/\s+/)[1]}`);
+      const username = text.split(/\s+/)[1];
+      if (!username) { await sendMessage(chatId, '❌ /unban &lt;username&gt;'); return res.json({ ok: true }); }
+      await supabase.from('users').update({ status: 'active' }).eq('username', username);
+      await sendMessage(chatId, `✅ Đã mở khóa: ${username}`);
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/deleteuser ')) {
+    if (text === '/deleteuser' || text.startsWith('/deleteuser ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
-      await supabase.from('users').delete().eq('username', text.split(/\s+/)[1]);
-      await sendMessage(chatId, `🗑️ Đã xóa: ${text.split(/\s+/)[1]}`);
+      const username = text.split(/\s+/)[1];
+      if (!username) { await sendMessage(chatId, '❌ /deleteuser &lt;username&gt;'); return res.json({ ok: true }); }
+      await supabase.from('users').delete().eq('username', username);
+      await sendMessage(chatId, `🗑️ Đã xóa: ${username}`);
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/setgemini ')) {
+    if (text === '/setgemini' || text.startsWith('/setgemini ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
-      await supabase.from('app_settings').upsert({ key: 'gemini_api_key', value: text.split(/\s+/)[1], description: 'Gemini API Key' });
+      const key = text.split(/\s+/)[1];
+      if (!key) { await sendMessage(chatId, '❌ /setgemini &lt;key&gt;'); return res.json({ ok: true }); }
+      await supabase.from('app_settings').upsert({ key: 'gemini_api_key', value: key, description: 'Gemini API Key' });
       await sendMessage(chatId, `✅ Gemini API Key đã cập nhật.`);
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/setquota ')) {
+    if (text === '/setquota' || text.startsWith('/setquota ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
       const parts = text.split(/\s+/);
-      if (parts.length < 4) { await sendMessage(chatId, '❌ /setquota &lt;username&gt; &lt;images&gt; &lt;videos&gt;'); return res.json({ ok: true }); }
+      if (parts.length < 4) { await sendMessage(chatId, '❌ /setquota &lt;username&gt; &lt;images&gt; &lt;videos&gt;\n\nVD: /setquota nguyen123 100 50'); return res.json({ ok: true }); }
       const { error } = await supabase.from('users').update({ image_quota: parseInt(parts[2]), video_quota: parseInt(parts[3]) }).eq('username', parts[1]);
       if (error) { await sendMessage(chatId, `❌ ${error.message}`); }
       else { await sendMessage(chatId, `✅ Quota ${parts[1]}: 📷 ${parts[2]} ảnh, 🎥 ${parts[3]} video`); }
       return res.json({ ok: true });
     }
 
-    if (text.startsWith('/resetquota ')) {
+    if (text === '/resetquota' || text.startsWith('/resetquota ')) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
       const username = text.split(/\s+/)[1];
+      if (!username) { await sendMessage(chatId, '❌ /resetquota &lt;username&gt;'); return res.json({ ok: true }); }
       const { error } = await supabase.from('users').update({ images_used: 0, videos_used: 0 }).eq('username', username);
       if (error) { await sendMessage(chatId, `❌ ${error.message}`); }
       else { await sendMessage(chatId, `✅ Đã reset quota cho ${username}`); }
