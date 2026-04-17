@@ -850,41 +850,65 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     }
   };
 
-  // Bulk: Tạo tất cả video
+  // Bulk: Tạo tất cả video (luôn I2V từ ảnh)
   const handleBulkVideo = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
     for (const key of keys) {
-      if (state.videoPrompts[key]?.text) {
+      if (abortRef.current) break;
+      if (state.videoPrompts[key]?.text && state.images[key]?.url) {
         await handleFlowVideoForKey(key);
       }
     }
   };
 
-  // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ
+  // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ với nút Stop
   const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStep, setAutoStep] = useState('');
+  const abortRef = useRef(false);
+
+  const handleStopAuto = () => {
+    abortRef.current = true;
+    setAutoRunning(false);
+    setAutoStep('⏹ Đã dừng');
+    setTimeout(() => setAutoStep(''), 3000);
+  };
+
   const handleAutoProject = async () => {
     if (autoRunning) return;
+    abortRef.current = false;
     setAutoRunning(true);
     try {
-      // Step 1: Tạo Prompt Ảnh cho tất cả
+      // Step 1: Tạo Prompt Ảnh
+      setAutoStep('1/4: Tạo Prompt Ảnh...');
       console.log('[AutoProject] Step 1/4: Tạo Prompt Ảnh...');
       await handleBulkImagePrompt();
+      if (abortRef.current) return;
       
-      // Step 2: Tạo Ảnh cho tất cả
+      // Step 2: Tạo Ảnh (R2I/T2I)
+      setAutoStep('2/4: Tạo Ảnh...');
       console.log('[AutoProject] Step 2/4: Tạo Ảnh...');
       await handleBulkImage();
+      if (abortRef.current) return;
       
-      // Step 3: Tạo Video Prompt cho tất cả
+      // Step 3: Tạo Video Prompt
+      setAutoStep('3/4: Tạo Video Prompt...');
       console.log('[AutoProject] Step 3/4: Tạo Video Prompt...');
       await handleBulkPrompt();
+      if (abortRef.current) return;
       
-      // Step 4: Tạo Video cho tất cả
+      // Step 4: Tạo Video từ Ảnh (I2V)
+      setAutoStep('4/4: Tạo Video (I2V)...');
       console.log('[AutoProject] Step 4/4: Tạo Video...');
       await handleBulkVideo();
       
-      console.log('[AutoProject] ✅ Hoàn tất!');
+      if (!abortRef.current) {
+        setAutoStep('✅ Hoàn tất!');
+        console.log('[AutoProject] ✅ Hoàn tất!');
+        setTimeout(() => setAutoStep(''), 5000);
+      }
     } catch (e) {
       console.error('[AutoProject] Lỗi:', e);
+      setAutoStep('❌ Lỗi: ' + (e as Error).message);
     } finally {
       setAutoRunning(false);
     }
@@ -1318,58 +1342,95 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
             ))}
           </div>
 
-          <div className="flex flex-col items-center gap-12 py-12">
-            {/* NÚT DỰ ÁN TỰ ĐỘNG */}
-            <div className="w-full px-4">
-              <button
-                onClick={handleAutoProject}
-                disabled={autoRunning}
-                className={`w-full py-5 text-white font-black rounded-2xl shadow-2xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
-                  autoRunning
-                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 cursor-wait animate-pulse'
-                    : 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:scale-[1.02] active:scale-95'
-                }`}
-              >
-                {autoRunning ? (
-                  <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> ĐANG CHẠY TỰ ĐỘNG...</>
-                ) : (
-                  <>🚀 DỰ ÁN TỰ ĐỘNG (Prompt → Ảnh → Video Prompt → Video)</>
+          <div className="flex flex-col items-center gap-8 py-12">
+            {/* NÚT DỰ ÁN TỰ ĐỘNG + STOP */}
+            <div className="w-full px-4 space-y-3">
+              <div className="flex gap-3">
+                <button
+                  onClick={handleAutoProject}
+                  disabled={autoRunning}
+                  className={`flex-1 py-5 text-white font-black rounded-2xl shadow-2xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
+                    autoRunning
+                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 cursor-wait'
+                      : 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:scale-[1.02] active:scale-95'
+                  }`}
+                >
+                  {autoRunning ? (
+                    <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> {autoStep || 'ĐANG CHẠY...'}</>
+                  ) : (
+                    <>🚀 DỰ ÁN TỰ ĐỘNG (Prompt → Ảnh → Video Prompt → Video)</>
+                  )}
+                </button>
+                {autoRunning && (
+                  <button
+                    onClick={handleStopAuto}
+                    className="px-6 py-5 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-2xl transition-all active:scale-95 uppercase tracking-widest text-sm"
+                  >
+                    ⏹ DỪNG
+                  </button>
                 )}
-              </button>
+              </div>
+              {autoStep && !autoRunning && (
+                <div className="text-center text-sm font-bold text-slate-600 bg-slate-100 rounded-xl py-2">{autoStep}</div>
+              )}
             </div>
 
             <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
               <button
-                onClick={handleBulkImage}
-                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
+                onClick={handleBulkImagePrompt}
+                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                Vẽ tất cả ảnh
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" clipRule="evenodd" /></svg>
+                📝 Tạo Prompt ảnh
               </button>
               <button
-                onClick={handleBulkImagePrompt}
-                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
+                onClick={handleBulkImage}
+                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                Tạo tất cả Prompt ảnh
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                🖼 Tạo Ảnh (R2I)
               </button>
               <button
                 onClick={handleBulkPrompt}
-                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
+                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                Tạo tất cả Prompt video
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>
+                ⚡ Tạo Prompt video
               </button>
               <button
                 onClick={handleBulkVideo}
-                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest bg-gradient-to-r from-violet-600 to-fuchsia-600"
+                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest bg-gradient-to-r from-violet-600 to-fuchsia-600"
               >
-                🎥 Tạo tất cả Video
+                🎥 Tạo Video (I2V)
               </button>
             </div>
+
+            {/* VIDEO GALLERY */}
+            {(() => {
+              const videoKeys = Array.from({ length: currentSceneCount }, (_, i) => `v${i + 1}`)
+                .filter(key => state.images[key]?.videoUrl);
+              if (videoKeys.length === 0) return null;
+              return (
+                <div className="w-full px-4">
+                  <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+                    <h3 className="text-sm font-black text-white uppercase tracking-tight mb-4">🎬 VIDEO ĐÃ TẠO ({videoKeys.length}/{currentSceneCount})</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                      {videoKeys.map((key, idx) => (
+                        <div key={key} className="space-y-2">
+                          <video
+                            src={state.images[key].videoUrl}
+                            controls
+                            playsInline
+                            className="w-full aspect-[9/16] bg-black rounded-xl border border-slate-700"
+                          />
+                          <p className="text-xs text-slate-400 font-bold text-center">Cảnh {parseInt(key.replace('v',''))}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {hasGeneratedItems && (
               <div className="flex flex-col md:flex-row items-center justify-center gap-4 border-t border-slate-200 w-full pt-12">

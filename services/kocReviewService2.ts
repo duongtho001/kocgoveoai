@@ -441,19 +441,65 @@ export const generateKocImage = async (
   imageFormat: string = "",
   language: string = "vi"
 ): Promise<string> => {
-  // Flow API T2I only — 9:16
   const prompt = constructKocImagePrompt(
     productName, scriptPart, characterDescription, userCustomPrompt,
     gender, imageStyle, backgroundNote, visualNote, poseLabel, imageFormat,
     !!faceImagePart, !!outfitImagePart, !!backgroundReferencePart, language
   );
+
+  // Collect all reference images (base64 data parts)
+  const refDataUrls: string[] = [];
   
+  // Product images
+  for (const part of referenceImageParts) {
+    if (part?.data) {
+      refDataUrls.push(`data:${part.mimeType || 'image/png'};base64,${part.data}`);
+    }
+  }
+  // Face image
+  if (faceImagePart?.data) {
+    refDataUrls.push(`data:${faceImagePart.mimeType || 'image/png'};base64,${faceImagePart.data}`);
+  }
+  // Outfit image
+  if (outfitImagePart?.data) {
+    refDataUrls.push(`data:${outfitImagePart.mimeType || 'image/png'};base64,${outfitImagePart.data}`);
+  }
+  // Background reference
+  if (backgroundReferencePart?.data) {
+    refDataUrls.push(`data:${backgroundReferencePart.mimeType || 'image/png'};base64,${backgroundReferencePart.data}`);
+  }
+
+  // If we have reference images, use R2I (Reference to Image)
+  if (refDataUrls.length > 0) {
+    console.log(`[KocService2] Flow API R2I 9:16 (${refDataUrls.length} refs)`);
+    try {
+      // Upload all reference images
+      const uploadedPaths: string[] = [];
+      for (let i = 0; i < refDataUrls.length; i++) {
+        const path = await flowApi.uploadBase64Image(refDataUrls[i], `ref_${i}.png`);
+        uploadedPaths.push(path);
+      }
+      
+      const result = await flowApi.referenceToImage(
+        [prompt],
+        uploadedPaths,
+        { aspect_ratio: '9:16' }
+      );
+      if (result.imageUrls && result.imageUrls.length > 0) {
+        return result.imageUrls[0];
+      }
+    } catch (r2iError) {
+      console.warn('[KocService2] R2I failed, falling back to T2I:', r2iError);
+    }
+  }
+  
+  // Fallback: T2I (no references)
   console.log(`[KocService2] Flow API T2I 9:16`);
   const result = await flowApi.textToImage([prompt], { aspect_ratio: '9:16' });
   if (result.imageUrls && result.imageUrls.length > 0) {
     return result.imageUrls[0];
   }
-  throw new Error('Flow API T2I: không tạo được ảnh');
+  throw new Error('Flow API: không tạo được ảnh');
 };
 
 /**
