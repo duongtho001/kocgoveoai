@@ -69,6 +69,6 @@ export const theme = {
     tagline: "Affiliate Content Creator",
     description: "Nền tảng tạo kịch bản & hình ảnh tự động",
     subsidiary: "AI FOR AFFILIATE & SELLER",
-    copyright: "@COPYRIGHT KÔNG VĂN - 0923.200.820"
+    copyright: "@COPYRIGHT Goveoai - 0934415387"
   }
 };

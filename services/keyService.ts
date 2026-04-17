@@ -1,107 +1,113 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { OpenRouter } from "@openrouter/sdk";
 
 // ============================================================
-// OpenRouter-based Text AI Client
-// Wraps OpenRouter SDK to match @google/genai interface
-// so all existing services work without modification.
+// OpenRouter-based Text AI Client (Direct Fetch - no SDK)
+// The @openrouter/sdk has strict Zod validation that rejects
+// multimodal content parts. Using direct fetch instead.
 // ============================================================
 
 const OPENROUTER_API_KEY = (import.meta as any).env?.VITE_OPENROUTER_API_KEY || '';
 const OPENROUTER_TEXT_MODEL = 'google/gemini-2.5-flash';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // Fallback: Google GenAI for image generation (OpenRouter doesn't support image gen)
 const GOOGLE_IMAGE_API_KEY = ((import.meta as any).env?.VITE_GEMINI_API_KEY || '').trim();
 
 /**
- * Creates an OpenRouter client wrapper that mimics the GoogleGenAI interface.
- * This allows all existing services to work without modification.
+ * Map Google model names to OpenRouter equivalents
+ */
+const mapModelName = (googleModel: string): string => {
+  const modelMap: Record<string, string> = {
+    'gemini-3-flash-preview': OPENROUTER_TEXT_MODEL,
+    'gemini-2.5-flash': OPENROUTER_TEXT_MODEL,
+    'gemini-1.5-flash': 'google/gemini-2.5-flash',
+    'gemini-1.5-flash-8b': 'google/gemini-2.5-flash',
+  };
+  return modelMap[googleModel] || OPENROUTER_TEXT_MODEL;
+};
+
+/**
+ * Direct fetch to OpenRouter /chat/completions endpoint.
+ * Converts Google GenAI format → OpenAI chat completion format.
  */
 const createOpenRouterAdapter = (apiKey: string) => {
-  const openrouter = new OpenRouter({ apiKey });
-
   return {
     models: {
       generateContent: async (params: any) => {
         const { model, contents, config } = params;
 
-        // Build messages for OpenRouter chat format
+        // Build messages for OpenRouter (OpenAI) chat format  
         const messages: any[] = [];
 
         // Add system instruction if present
         if (config?.systemInstruction) {
+          const sysText = typeof config.systemInstruction === 'string'
+            ? config.systemInstruction
+            : config.systemInstruction?.parts?.[0]?.text || JSON.stringify(config.systemInstruction);
           messages.push({
             role: 'system',
-            content: config.systemInstruction
+            content: sysText
           });
         }
 
-        // Convert Google GenAI contents format to OpenRouter messages
+        // Convert Google GenAI contents format to OpenAI messages
         if (Array.isArray(contents)) {
-          // Multi-turn conversation format
+          // Multi-turn conversation: [{ role: 'user', parts: [...] }, ...]
           for (const msg of contents) {
-            const role = msg.role === 'model' ? 'assistant' : msg.role || 'user';
-            const contentParts: any[] = [];
-
-            for (const part of (msg.parts || [])) {
-              if (part.text) {
-                contentParts.push({ type: 'text', text: part.text });
-              }
-              if (part.inlineData) {
-                contentParts.push({
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-                  }
-                });
-              }
-            }
-
-            messages.push({ role, content: contentParts.length === 1 && contentParts[0].type === 'text' ? contentParts[0].text : contentParts });
+            const role = msg.role === 'model' ? 'assistant' : (msg.role || 'user');
+            const contentParts = convertParts(msg.parts || []);
+            messages.push({
+              role,
+              content: contentParts.length === 1 && typeof contentParts[0] === 'string'
+                ? contentParts[0]
+                : contentParts
+            });
           }
         } else if (contents?.parts) {
-          // Single content format: { parts: [...] }
-          const contentParts: any[] = [];
-          for (const part of contents.parts) {
-            if (part.text) {
-              contentParts.push({ type: 'text', text: part.text });
-            }
-            if (part.inlineData) {
-              contentParts.push({
-                type: 'image_url',
-                image_url: {
-                  url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-                }
-              });
-            }
-          }
+          // Single content: { parts: [{ text: '...' }, { inlineData: {...} }] }
+          const contentParts = convertParts(contents.parts);
           messages.push({
             role: 'user',
-            content: contentParts.length === 1 && contentParts[0].type === 'text' ? contentParts[0].text : contentParts
+            content: contentParts.length === 1 && typeof contentParts[0] === 'string'
+              ? contentParts[0]
+              : contentParts
           });
         }
 
-        // Build response_format for structured output
-        let responseFormat: any = undefined;
+        // Build response_format
+        let response_format: any = undefined;
         if (config?.responseMimeType === 'application/json') {
-          responseFormat = { type: 'json_object' };
+          response_format = { type: 'json_object' };
         }
 
-        // Use the configured model, mapping Google model names to OpenRouter equivalents
         const openRouterModel = mapModelName(model || OPENROUTER_TEXT_MODEL);
 
-        const response = await openrouter.chat.send({
-          chatRequest: {
+        // Direct fetch to OpenRouter API
+        const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : '',
+            'X-Title': 'KOC Studio',
+          },
+          body: JSON.stringify({
             model: openRouterModel,
             messages,
-            responseFormat: responseFormat,
+            response_format,
             temperature: 0.7,
-            maxTokens: 8192,
-          }
+            max_tokens: 8192,
+          }),
         });
 
-        const text = (response as any)?.choices?.[0]?.message?.content || '';
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
+        }
+
+        const data = await response.json();
+        const text = data?.choices?.[0]?.message?.content || '';
 
         // Return in GoogleGenAI-compatible format
         return {
@@ -118,18 +124,29 @@ const createOpenRouterAdapter = (apiKey: string) => {
 };
 
 /**
- * Map Google model names to OpenRouter equivalents
+ * Convert Google GenAI parts to OpenAI content parts
  */
-const mapModelName = (googleModel: string): string => {
-  const modelMap: Record<string, string> = {
-    'gemini-3-flash-preview': OPENROUTER_TEXT_MODEL,
-    'gemini-2.5-flash': OPENROUTER_TEXT_MODEL,
-    'gemini-1.5-flash': 'google/gemini-2.5-flash',
-    'gemini-1.5-flash-8b': 'google/gemini-2.5-flash',
-    'gemini-3.1-flash-image-preview': 'gemini-3.1-flash-image-preview', // Keep as-is for image gen
-  };
-  return modelMap[googleModel] || OPENROUTER_TEXT_MODEL;
-};
+function convertParts(parts: any[]): any[] {
+  const result: any[] = [];
+  for (const part of parts) {
+    if (part.text) {
+      result.push({ type: 'text', text: part.text });
+    }
+    if (part.inlineData) {
+      result.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+        }
+      });
+    }
+  }
+  // If only one text part, return as simple string
+  if (result.length === 1 && result[0].type === 'text') {
+    return [result[0].text];
+  }
+  return result;
+}
 
 // ============================================================
 // Public API (same interface as before)
@@ -151,14 +168,13 @@ export const callWithRetry = async (fn: () => Promise<any>, retries = 2, delay =
 };
 
 /**
- * Get AI client for text generation (uses OpenRouter)
+ * Get AI client for text generation (uses OpenRouter) or image (uses Google GenAI)
  */
 export const getAiClient = (type: 'text' | 'image' = 'text'): any => {
   if (type === 'image') {
     // Image generation: still uses Google GenAI (OpenRouter doesn't support image gen)
     if (!GOOGLE_IMAGE_API_KEY) {
       console.warn('[KeyService] No VITE_GEMINI_API_KEY for image generation, trying OpenRouter adapter...');
-      // Fallback: try OpenRouter with image-capable model
       if (OPENROUTER_API_KEY) {
         return createOpenRouterAdapter(OPENROUTER_API_KEY);
       }
@@ -167,9 +183,8 @@ export const getAiClient = (type: 'text' | 'image' = 'text'): any => {
     return new GoogleGenAI({ apiKey: GOOGLE_IMAGE_API_KEY });
   }
 
-  // Text generation: uses OpenRouter
+  // Text generation: uses OpenRouter via direct fetch
   if (!OPENROUTER_API_KEY) {
-    // Fallback: Try Google GenAI directly
     if (GOOGLE_IMAGE_API_KEY) {
       console.warn('[KeyService] No OpenRouter API key, falling back to Google GenAI');
       return new GoogleGenAI({ apiKey: GOOGLE_IMAGE_API_KEY });
@@ -189,7 +204,6 @@ export const callWithAiFallback = async <T>(task: (ai: any) => Promise<T>): Prom
   } catch (error) {
     console.warn("[KeyService] Text AI failed, trying fallback...", error);
     try {
-      // Try with image client as fallback (Google GenAI direct)
       if (GOOGLE_IMAGE_API_KEY) {
         return await task(new GoogleGenAI({ apiKey: GOOGLE_IMAGE_API_KEY }));
       }
