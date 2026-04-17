@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ScriptPartKey, ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import * as service from '../services/kocReviewService2';
-import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
+import { runBatch, getConcurrencySettings, saveConcurrencySettings, ConcurrencySettings } from '../services/concurrencyService';
+import * as flowApi from '../services/flowApiService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { HOOK_LAYOUTS } from '../components/45hook';
@@ -30,6 +31,16 @@ const VOICE_OPTIONS = [
   "Giọng miền Nam 5-10 tuổi"
 ];
 
+// Flow API Voice options for video generation (R2V)
+const FLOW_VOICE_OPTIONS = [
+  { value: '', label: '-- Không dùng Voice (I2V) --' },
+  { value: 'Puck', label: '🎙️ Puck - Nam, tếu táo' },
+  { value: 'Charon', label: '🎙️ Charon - Nam, trầm ấm' },
+  { value: 'Kore', label: '🎙️ Kore - Nữ, trẻ trung' },
+  { value: 'Fenrir', label: '🎙️ Fenrir - Nam, gần gũi' },
+  { value: 'Zephyr', label: '🎙️ Zephyr - Nữ, ngọt ngào' }
+];
+
 const ADDRESSING_OPTIONS = [
   "em - anh chị",
   "em - các bác",
@@ -47,9 +58,12 @@ const ADDRESSING_OPTIONS = [
 
 interface KocReviewModule2Props {
   language?: string;
+  loggedInUser?: string | null;
+  userQuota?: any;
+  onQuotaChange?: (quota: any) => void;
 }
 
-const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) => {
+const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', loggedInUser, userQuota, onQuotaChange }) => {
   const storageKey = "koc_project_v23_clone_instance";
   const [state, setState] = useState<any>({
     faceFile: null,
@@ -66,6 +80,8 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     addressing: '',
     targetAudience: '',
     imageStyle: 'Realistic',
+    imageQuality: 'fast', // 'fast' | '4k'
+    flowVoice: '', // Flow API voice for R2V
     sceneCount: 5,
     productFiles: [], 
     productPreviewUrls: [],
@@ -80,11 +96,18 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     isGeneratingScript: false,
     isAnalyzingBackground: false,
     isRegeneratingPart: {},
+    isFullWorkflowRunning: false,
+    fullWorkflowStep: '',
+    fullWorkflowProgress: 0,
     script: null,
     images: {},
     imagePrompts: {},
     videoPrompts: {}
   });
+  
+  // Concurrency settings state
+  const [concurrencySettings, setConcurrencySettingsState] = useState<ConcurrencySettings>(getConcurrencySettings());
+  const [showConcurrencyPanel, setShowConcurrencyPanel] = useState(false);
   const [copyStatus, setCopyStatus] = useState<{[key: string]: boolean}>({});
 
   const handleCopy = async (text: string, id: string) => {
@@ -763,6 +786,233 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     );
   };
 
+  // ═══════════ Generate Video for single key (Flow API) ═══════════
+  const handleGenerateVideoForKey = async (key: string) => {
+    if (!state.images[key]?.url || !state.videoPrompts[key]?.text) return;
+    setState((prev: any) => ({
+      ...prev,
+      images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
+    }));
+    try {
+      const videoUrl = await flowApi.generateVideoFromImage(
+        state.images[key].url,
+        state.videoPrompts[key].text,
+        { aspect_ratio: '9:16', voice: state.flowVoice || undefined },
+        (job) => console.log(`[Video ${key}] ${job.status} ${job.progress}%`)
+      );
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+      }));
+    } catch (e) {
+      console.error(`Video gen failed for ${key}:`, e);
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+      }));
+    }
+  };
+
+  // ═══════════ Bulk Video Generation ═══════════
+  const handleBulkVideo = async () => {
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
+      .filter(key => state.images[key]?.url && state.videoPrompts[key]?.text);
+    if (keys.length === 0) {
+      alert('Cần có ảnh và video prompt trước khi tạo video.');
+      return;
+    }
+    const { videoConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGenerateVideoForKey(key) })),
+      videoConcurrency
+    );
+  };
+
+  // ═══════════ FULL WORKFLOW: Script → Image → Video Prompt → Video ═══════════
+  const handleFullWorkflow = async () => {
+    if (state.isFullWorkflowRunning) return;
+    if (state.productFiles.length === 0 && state.productPreviewUrls.length === 0) {
+      alert('Vui lòng tải ảnh sản phẩm.');
+      return;
+    }
+    if (!state.productName) {
+      alert('Vui lòng nhập tên sản phẩm.');
+      return;
+    }
+
+    setState((p: any) => ({ ...p, isFullWorkflowRunning: true, fullWorkflowStep: 'Đang tạo kịch bản...', fullWorkflowProgress: 5 }));
+
+    try {
+      // === Step 1: Generate Script ===
+      const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+      const initialImages: any = {};
+      const initialPrompts: any = {};
+      const initialImagePrompts: any = {};
+      activeKeys.forEach(k => {
+        initialImages[k] = { url: '', loading: false, customPrompt: '', pose: '', format: '' };
+        initialPrompts[k] = { text: '', loading: false, visible: false };
+        initialImagePrompts[k] = { text: '', loading: false, visible: false };
+      });
+
+      setState((p: any) => ({ ...p, script: null, images: initialImages, imagePrompts: initialImagePrompts, videoPrompts: initialPrompts }));
+
+      let imageParts = [];
+      if (state.productFiles.length > 0) {
+        imageParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
+      } else {
+        imageParts = state.productPreviewUrls.map((url: string) => ({
+          mimeType: 'image/png',
+          data: url.split(',')[1]
+        }));
+      }
+
+      let layoutToUse = state.scriptLayout;
+      if (layoutToUse === 'Tự sáng tạo') {
+        layoutToUse = state.customLayout || 'Tự sáng tạo';
+      } else if (!layoutToUse) {
+        layoutToUse = LAYOUT_OPTIONS[Math.floor(Math.random() * LAYOUT_OPTIONS.length)];
+      }
+
+      const script = await service.generateKocScript(
+        imageParts, state.productName, state.keyword, state.scriptTone, state.productSize, state.scriptNote,
+        layoutToUse, state.gender, state.voice, state.addressing, state.sceneCount, state.targetAudience, language
+      );
+      setState((p: any) => ({ ...p, script, scriptLayout: layoutToUse, fullWorkflowStep: 'Đang vẽ ảnh AI...', fullWorkflowProgress: 25 }));
+
+      // === Step 2: Generate All Images ===
+      const { imageConcurrency } = getConcurrencySettings();
+      // We need to wait for script to be set, use direct state
+      const tempState = { ...state, script };
+      
+      const genImage = async (key: string) => {
+        setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: true } } }));
+        try {
+          let productParts = [];
+          if (state.productFiles.length > 0) {
+            productParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
+          } else {
+            productParts = state.productPreviewUrls.map((url: string) => ({ mimeType: 'image/png', data: url.split(',')[1] }));
+          }
+          const getPart = async (file: File | null, url: string | null) => {
+            if (file) return await service.fileToGenerativePart(file);
+            if (url?.startsWith('data:')) return { mimeType: 'image/png', data: url.split(',')[1] };
+            return null;
+          };
+          const facePart = await getPart(state.faceFile, state.facePreviewUrl);
+          const outfitPart = state.processedOutfitUrl
+            ? { mimeType: 'image/png', data: state.processedOutfitUrl.split(',')[1] }
+            : await getPart(state.outfitFile, state.outfitPreviewUrl);
+          const bgRefPart = await getPart(state.backgroundFile, state.backgroundPreviewUrl);
+          const url = await service.generateKocImage(
+            productParts, facePart, outfitPart, '', state.productName, script[key],
+            state.characterDescription, '', state.gender, state.imageStyle, state.scriptNote,
+            state.visualNote, '', bgRefPart, '', language
+          );
+          setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url, loading: false } } }));
+          return url;
+        } catch (e) {
+          setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Failed' } } }));
+          return '';
+        }
+      };
+
+      await runBatch(
+        activeKeys.map(key => ({ key, fn: () => genImage(key) })),
+        imageConcurrency
+      );
+      setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang tạo Video Prompt...', fullWorkflowProgress: 55 }));
+
+      // === Step 3: Generate All Video Prompts ===
+      const { videoPromptConcurrency } = getConcurrencySettings();
+      const genVideoPrompt = async (key: string) => {
+        setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
+        try {
+          let productImageData = '';
+          if (state.productFiles.length > 0) {
+            const p2 = await service.fileToGenerativePart(state.productFiles[0]);
+            productImageData = p2.data;
+          } else if (state.productPreviewUrls.length > 0) {
+            productImageData = state.productPreviewUrls[0].split(',')[1];
+          }
+          // Read the latest image URL from current state snapshot
+          const latestState = await new Promise<any>(resolve => {
+            setState((prev: any) => { resolve(prev); return prev; });
+          });
+          const imageUrl = latestState.images[key]?.url || '';
+          if (!imageUrl) {
+            setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: false } } }));
+            return;
+          }
+          const prompt = await service.generateKocVeoPrompt(
+            state.productName, script[key], state.gender, state.voice,
+            productImageData, imageUrl, false, state.imageStyle, '', language
+          );
+          setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { text: prompt, loading: false, visible: true } } }));
+        } catch (e) {
+          setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: false } } }));
+        }
+      };
+
+      await runBatch(
+        activeKeys.map(key => ({ key, fn: () => genVideoPrompt(key) })),
+        videoPromptConcurrency
+      );
+      setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang tạo Video AI...', fullWorkflowProgress: 75 }));
+
+      // === Step 4: Generate All Videos (via Flow API) ===
+      if (flowApi.isFlowApiAvailable()) {
+        const { videoConcurrency } = getConcurrencySettings();
+        const genVideo = async (key: string) => {
+          const latestState2 = await new Promise<any>(resolve => {
+            setState((prev: any) => { resolve(prev); return prev; });
+          });
+          const imgUrl = latestState2.images[key]?.url;
+          const vPrompt = latestState2.videoPrompts[key]?.text;
+          if (!imgUrl || !vPrompt) return;
+          setState((prev: any) => ({
+            ...prev,
+            images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
+          }));
+          try {
+            const videoUrl = await flowApi.generateVideoFromImage(
+              imgUrl, vPrompt,
+              { aspect_ratio: '9:16', voice: state.flowVoice || undefined }
+            );
+            setState((prev: any) => ({
+              ...prev,
+              images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+            }));
+          } catch (e) {
+            console.error(`WF Video failed for ${key}:`, e);
+            setState((prev: any) => ({
+              ...prev,
+              images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+            }));
+          }
+        };
+
+        await runBatch(
+          activeKeys.map(key => ({ key, fn: () => genVideo(key) })),
+          videoConcurrency
+        );
+      }
+
+      setState((p: any) => ({ ...p, fullWorkflowStep: 'Hoàn thành! ✅', fullWorkflowProgress: 100 }));
+      setTimeout(() => {
+        setState((p: any) => ({ ...p, isFullWorkflowRunning: false, fullWorkflowStep: '', fullWorkflowProgress: 0 }));
+      }, 3000);
+    } catch (e) {
+      console.error('Full workflow failed:', e);
+      setState((p: any) => ({ ...p, isFullWorkflowRunning: false, fullWorkflowStep: 'Lỗi! ❌', fullWorkflowProgress: 0 }));
+    }
+  };
+
+  // ═══════════ Update Concurrency Settings ═══════════
+  const handleConcurrencyChange = (field: keyof ConcurrencySettings, value: number) => {
+    const updated = saveConcurrencySettings({ [field]: value });
+    setConcurrencySettingsState(updated);
+  };
+
   const handleGeneratePromptForKey = async (key: string) => {
     setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
     try {
@@ -1117,6 +1367,100 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
               </div>
             </div>
 
+            {/* ═══ Chế độ tạo ảnh Nhanh / 4K ═══ */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">⚡ Chất lượng ảnh (Flow API)</label>
+                <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
+                  <button
+                    onClick={() => setState(p => ({ ...p, imageQuality: 'fast' }))}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === 'fast' ? 'text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                    style={state.imageQuality === 'fast' ? { backgroundColor: '#059669' } : {}}
+                  >
+                    ⚡ Nhanh
+                  </button>
+                  <button
+                    onClick={() => setState(p => ({ ...p, imageQuality: '4k' }))}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === '4k' ? 'text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                    style={state.imageQuality === '4k' ? { backgroundColor: '#7c3aed' } : {}}
+                  >
+                    🔥 4K Ultra
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">🎙️ Voice mẫu (Tạo video)</label>
+                <select
+                  value={state.flowVoice}
+                  onChange={e => setState(p => ({ ...p, flowVoice: e.target.value }))}
+                  className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold text-sm`}
+                >
+                  {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* ═══ Số luồng (Concurrency Settings) ═══ */}
+            <div className="space-y-1">
+              <button
+                onClick={() => setShowConcurrencyPanel(!showConcurrencyPanel)}
+                className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase px-1 hover:text-slate-700 transition-colors"
+              >
+                <svg className={`w-3.5 h-3.5 transition-transform ${showConcurrencyPanel ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                </svg>
+                ⚙️ Cài đặt số luồng (Concurrency)
+              </button>
+              {showConcurrencyPanel && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200 animate-fadeIn">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase">Ảnh AI</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={1} max={5} value={concurrencySettings.imageConcurrency}
+                        onChange={e => handleConcurrencyChange('imageConcurrency', parseInt(e.target.value))}
+                        className="flex-1 h-2 accent-emerald-600"
+                      />
+                      <span className="text-sm font-black text-emerald-600 w-6 text-center">{concurrencySettings.imageConcurrency}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase">Video</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={1} max={5} value={concurrencySettings.videoConcurrency}
+                        onChange={e => handleConcurrencyChange('videoConcurrency', parseInt(e.target.value))}
+                        className="flex-1 h-2 accent-violet-600"
+                      />
+                      <span className="text-sm font-black text-violet-600 w-6 text-center">{concurrencySettings.videoConcurrency}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase">Image Prompt</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={1} max={10} value={concurrencySettings.imagePromptConcurrency}
+                        onChange={e => handleConcurrencyChange('imagePromptConcurrency', parseInt(e.target.value))}
+                        className="flex-1 h-2 accent-blue-600"
+                      />
+                      <span className="text-sm font-black text-blue-600 w-6 text-center">{concurrencySettings.imagePromptConcurrency}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase">Video Prompt</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range" min={1} max={10} value={concurrencySettings.videoPromptConcurrency}
+                        onChange={e => handleConcurrencyChange('videoPromptConcurrency', parseInt(e.target.value))}
+                        className="flex-1 h-2 accent-orange-600"
+                      />
+                      <span className="text-sm font-black text-orange-600 w-6 text-center">{concurrencySettings.videoPromptConcurrency}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Bố cục kịch bản (Layout)</label>
               <select value={state.scriptLayout} onChange={e => setState(p => ({ ...p, scriptLayout: e.target.value }))} className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none`}>
@@ -1230,6 +1574,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                   onGeneratePrompt={() => handleGeneratePromptForKey(key)}
                   onGenerateImagePrompt={() => handleGenerateImagePromptForKey(key)}
                   onRegenerate={() => handleGenImageForKey(key)}
+                  onGenerateVideo={() => handleGenerateVideoForKey(key)}
                   onTranslate={() => { }}
                   onUpload={(file) => handleUploadImageForKey(key, file)}
                   onDelete={() => handleDeleteImageForKey(key)}
@@ -1243,6 +1588,42 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
           </div>
 
           <div className="flex flex-col items-center gap-12 py-12">
+            {/* ═══ WORKFLOW: Kịch bản → Video (Full Pipeline) ═══ */}
+            <div className="w-full px-4">
+              <button
+                onClick={handleFullWorkflow}
+                disabled={state.isFullWorkflowRunning}
+                className={`w-full py-5 text-white font-black rounded-2xl shadow-2xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest active:scale-[0.98] ${
+                  state.isFullWorkflowRunning
+                    ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 cursor-wait'
+                    : 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:scale-[1.02] hover:shadow-violet-500/30'
+                }`}
+              >
+                {state.isFullWorkflowRunning ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    {state.fullWorkflowStep}
+                  </>
+                ) : (
+                  <>
+                    🚀 TẠO TỪ KỊCH BẢN → VIDEO (Full Pipeline)
+                  </>
+                )}
+              </button>
+              {state.isFullWorkflowRunning && (
+                <div className="mt-3 relative h-3 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-700 ease-out rounded-full"
+                    style={{ width: `${state.fullWorkflowProgress}%` }}
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-white mix-blend-difference">
+                    {state.fullWorkflowProgress}%
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* ═══ Batch Action Buttons ═══ */}
             <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
               <button
                 onClick={handleBulkImage}
@@ -1267,6 +1648,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
               >
                 Tạo tất cả Prompt video
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>
+              </button>
+              <button
+                onClick={handleBulkVideo}
+                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest bg-gradient-to-r from-violet-600 to-fuchsia-600"
+              >
+                🎥 Tạo tất cả Video
               </button>
             </div>
 
