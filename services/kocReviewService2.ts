@@ -607,15 +607,25 @@ export const generateKocImageBatch = async (
   }
   
   // Step 3: Split items across profiles
-  const perProfile = Math.ceil(items.length / numProfiles);
-  const concurrencyPerProfile = Math.max(1, Math.ceil(maxConcurrency / numProfiles));
+  // 1 profile → 1 request (server handles internal concurrency via semaphore)
+  // 2+ profiles → split evenly so each profile gets its own job and Chrome session
   const chunks: { key: string; prompt: string }[][] = [];
+  let concurrencyPerChunk: number;
   
-  for (let i = 0; i < items.length; i += perProfile) {
-    chunks.push(items.slice(i, i + perProfile));
+  if (numProfiles <= 1) {
+    // 1 profile: send ALL in 1 request — server internally parallelizes via semaphore
+    chunks.push([...items]);
+    concurrencyPerChunk = maxConcurrency;
+    console.log(`[BatchImage] 1 profile → 1 request with ${items.length} prompts, concurrency=${maxConcurrency}`);
+  } else {
+    // 2+ profiles: split evenly so each gets a separate job → different Chrome session
+    const perProfile = Math.ceil(items.length / numProfiles);
+    concurrencyPerChunk = Math.max(1, Math.ceil(maxConcurrency / numProfiles));
+    for (let i = 0; i < items.length; i += perProfile) {
+      chunks.push(items.slice(i, i + perProfile));
+    }
+    console.log(`[BatchImage] ${numProfiles} profiles → ${chunks.length} request(s), ${concurrencyPerChunk} concurrency each`);
   }
-  
-  console.log(`[BatchImage] Splitting ${items.length} prompts into ${chunks.length} request(s), ${concurrencyPerProfile} concurrency each`);
 
   // Step 4: Send requests in parallel (1 per profile)
   const useR2I = uploadedPaths.length > 0;
@@ -632,7 +642,7 @@ export const generateKocImageBatch = async (
             {
               aspect_ratio: '9:16',
               upscale_quality: upscaleOpt,
-              max_concurrency: concurrencyPerProfile
+              max_concurrency: concurrencyPerChunk
             },
             onProgress
           );
@@ -643,7 +653,7 @@ export const generateKocImageBatch = async (
             {
               aspect_ratio: '9:16',
               upscale_quality: upscaleOpt,
-              max_concurrency: concurrencyPerProfile
+              max_concurrency: concurrencyPerChunk
             },
             onProgress
           );
@@ -660,7 +670,7 @@ export const generateKocImageBatch = async (
               {
                 aspect_ratio: '9:16',
                 upscale_quality: upscaleOpt,
-                max_concurrency: concurrencyPerProfile
+                max_concurrency: concurrencyPerChunk
               },
               onProgress
             );

@@ -205,6 +205,23 @@ export const uploadBase64Image = async (dataUrl: string, filename: string = 'ima
 };
 
 /**
+ * Query server để biết số profiles (accounts) và cấu hình concurrency.
+ * Dùng cho batch image/video generation — biết cần split bao nhiêu requests.
+ */
+export const getFlowServerConcurrency = async (): Promise<{
+  accounts: { profile: string; max_slots: number; running: number; available: boolean }[];
+  max_workers: number;
+}> => {
+  const resp = await flowFetch('/api/health');
+  if (!resp.ok) throw new Error(`Health check failed: ${resp.status}`);
+  const data = await resp.json();
+  return {
+    accounts: data.accounts || [],
+    max_workers: data.max_workers || 1,
+  };
+};
+
+/**
  * Poll job status cho đến khi hoàn thành hoặc thất bại
  */
 export const waitForJob = async (
