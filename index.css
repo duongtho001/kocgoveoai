@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-primary: var(--primary-color, #ea580c);
+  --color-brand-primary-hover: var(--primary-hover-color, #d44d0a);
+  --color-brand-secondary: var(--secondary-color, #000000);
+  --color-brand-accent: var(--accent-color, #ea580c);
+  --color-brand-accent-hover: var(--accent-hover-color, #d44d0a);
+  --color-brand-danger: var(--danger-color, #ea580c);
+  --color-brand-danger-hover: var(--danger-hover-color, #d44d0a);
+
+  --color-text-main: var(--font-color, #000000);
+  --color-logo-main: var(--logo-color, #ea580c);
+}

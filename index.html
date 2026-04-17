@@ -1,0 +1,146 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KOC STUDIO - Trợ Lý Ai For Affiliate & Seller</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Montserrat:wght@600;700;800;900&family=Roboto:wght@400;700;900&family=Pacifico&family=Raleway:wght@400;700;900&family=Lobster&family=Oswald:wght@400;700&family=Noto+Sans+SC:wght@400;700&family=Open+Sans:wght@400;700;800&family=Playfair+Display:wght@700;900&family=Lora:wght@700&family=Merriweather:wght@700;900&family=Dancing+Script:wght@700&family=Charm:wght@700&family=Mali:wght@700&family=Patrick+Hand&family=Baloo+2:wght@700;800&family=Comfortaa:wght@700&family=Quicksand:wght@700&family=Josefin+Sans:wght@700&family=Archivo+Black&family=Saira+Stencil+One&display=swap" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; font-size: 14px; }
+      /* Custom scrollbar for text areas */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: #f1f1f1; }
+      ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+      /* Standardize font size to 14px for module content, excluding login, header, and footer */
+      main .text-sm, 
+      main .text-base,
+      main input,
+      main select,
+      main textarea {
+        font-size: 14px !important;
+      }
+    </style>
+    <style>
+      /* Aggressively hide the Google Translate bar and all its variations */
+      .goog-te-banner-frame, 
+      .goog-te-banner-frame.skiptranslate,
+      .goog-te-banner,
+      #goog-gt-tt,
+      .goog-te-balloon-frame,
+      iframe.goog-te-banner-frame,
+      .goog-tooltip,
+      .goog-tooltip:hover,
+      .goog-te-gadget-icon,
+      #google_translate_element2,
+      .skiptranslate {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        height: 0 !important;
+        width: 0 !important;
+        pointer-events: none !important;
+      }
+      /* Specifically target the iframe by ID pattern if possible */
+      iframe[id*=":1.container"],
+      iframe[id*=":2.container"],
+      iframe[class*="goog-te-banner-frame"] {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+      }
+      .goog-text-highlight {
+        background-color: transparent !important;
+        box-shadow: none !important;
+      }
+      html, body {
+        top: 0px !important;
+        margin-top: 0px !important;
+        position: relative !important;
+      }
+      /* Ensure no space is reserved at the top */
+      body {
+        top: 0 !important;
+      }
+      /* Hide the original Google Translate element */
+      #google_translate_element {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+        visibility: hidden;
+        display: none !important;
+      }
+    </style>
+    <script type="text/javascript">
+      function googleTranslateElementInit() {
+        new google.translate.TranslateElement({
+          pageLanguage: 'vi',
+          includedLanguages: 'vi,en,ja,ko,zh-CN,th,id,ms,tl,km,lo,my,fr,de',
+          autoDisplay: false
+        }, 'google_translate_element');
+      }
+
+      // MutationObserver to remove the translate banner if it's added to the DOM
+      const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.addedNodes.length) {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeName === 'IFRAME') {
+                if (node.classList.contains('goog-te-banner-frame') || 
+                    (node.id && node.id.includes('.container')) ||
+                    (node.src && node.src.includes('translate_a'))) {
+                  node.style.setProperty('display', 'none', 'important');
+                  node.style.setProperty('visibility', 'hidden', 'important');
+                  node.style.setProperty('height', '0', 'important');
+                  // node.remove(); // Removing might cause errors in the script, so hiding is safer
+                }
+              }
+              // Also check for skiptranslate elements that are frames
+              if (node.classList && node.classList.contains('skiptranslate') && node.nodeName === 'IFRAME') {
+                node.style.setProperty('display', 'none', 'important');
+              }
+            });
+          }
+        });
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
+      // Periodically check and fix body top position and hide any appearing frames
+      setInterval(() => {
+        if (document.body.style.top !== '0px') {
+          document.body.style.top = '0px';
+        }
+        const frames = document.getElementsByTagName('iframe');
+        for (let i = 0; i < frames.length; i++) {
+          const f = frames[i];
+          if (f.classList.contains('goog-te-banner-frame') || (f.id && f.id.includes('.container'))) {
+            f.style.setProperty('display', 'none', 'important');
+            f.style.setProperty('visibility', 'hidden', 'important');
+          }
+        }
+        
+        // Add notranslate to all SVGs to prevent crashes
+        const svgs = document.getElementsByTagName('svg');
+        for (let i = 0; i < svgs.length; i++) {
+          if (!svgs[i].classList.contains('notranslate')) {
+            svgs[i].classList.add('notranslate');
+            svgs[i].setAttribute('translate', 'no');
+          }
+        }
+      }, 200);
+    </script>
+    <script type="text/javascript" src="https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
+</head>
+  <body class="bg-white text-black antialiased">
+    <div id="google_translate_element"></div>
+    <div id="root"></div>
+  <script type="module" src="./index.tsx"></script>
+</body>
+</html>
