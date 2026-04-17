@@ -472,3 +472,16 @@ export const videoUrlToPath = async (videoUrl: string): Promise<string> => {
 export const isFlowApiAvailable = (): boolean => {
   return !!FLOW_API_URL;
 };
+
+/**
+ * Convenience helper: Generate a single image from a text prompt.
+ * Used by all services as replacement for Gemini image generation.
+ * Always returns 9:16 aspect ratio.
+ */
+export const generateImage = async (prompt: string, aspectRatio: string = '9:16'): Promise<string> => {
+  const result = await textToImage([prompt], { aspect_ratio: aspectRatio });
+  if (result.imageUrls && result.imageUrls.length > 0) {
+    return result.imageUrls[0];
+  }
+  throw new Error('Flow API T2I: không tạo được ảnh');
+};

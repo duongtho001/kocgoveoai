@@ -37,6 +37,63 @@ const createOpenRouterAdapter = (apiKey: string) => {
       generateContent: async (params: any) => {
         const { model, contents, config } = params;
 
+        // ============================================================
+        // INTERCEPT: If imageConfig is present, redirect to Flow API T2I
+        // This handles ALL services that used Gemini image generation
+        // ============================================================
+        if (config?.imageConfig) {
+          const { generateImage } = await import('./flowApiService');
+          // Extract text prompt from contents
+          let prompt = '';
+          const parts = contents?.parts || (Array.isArray(contents) ? contents[0]?.parts : []) || [];
+          for (const part of parts) {
+            if (part.text) prompt += part.text + ' ';
+          }
+          prompt = prompt.trim();
+          if (!prompt) prompt = 'Photorealistic product photo, 9:16, cinematic lighting, 8k';
+          
+          const aspectRatio = config.imageConfig.aspectRatio || '9:16';
+          console.log(`[Adapter] Intercepted imageConfig → Flow API T2I ${aspectRatio}`);
+          const imageUrl = await generateImage(prompt, aspectRatio);
+          
+          // Fetch the image and convert to base64 to match Gemini response format
+          let base64Data = '';
+          try {
+            const imgResponse = await fetch(imageUrl);
+            const blob = await imgResponse.blob();
+            base64Data = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const dataUrl = reader.result as string;
+                resolve(dataUrl.split(',')[1] || '');
+              };
+              reader.readAsDataURL(blob);
+            });
+          } catch (fetchErr) {
+            // If fetch fails (CORS), return URL directly — services will handle it
+            console.warn('[Adapter] Could not fetch image for base64, returning URL directly');
+            return {
+              text: imageUrl,
+              candidates: [{ content: { parts: [{ text: imageUrl }] } }]
+            };
+          }
+          
+          // Return in exact Gemini-compatible format with inlineData
+          return {
+            text: null,
+            candidates: [{
+              content: {
+                parts: [{ 
+                  inlineData: {
+                    mimeType: 'image/png',
+                    data: base64Data
+                  }
+                }]
+              }
+            }]
+          };
+        }
+
         // Build messages for OpenRouter (OpenAI) chat format  
         const messages: any[] = [];
 
