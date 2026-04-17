@@ -4,6 +4,7 @@ import { ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import { LANGUAGE_CONSTRAINTS } from '../utils/languageUtils';
 import * as service from '../services/reviewDoiThoaiService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { theme } from '../constants/colors';
 import { analyzeDetailedBackground } from '../services/kocReviewService2';
 import ScriptSection from '../components/ScriptSection';
@@ -389,9 +390,14 @@ const ReviewDoiThoaiModule: React.FC<Props> = ({ language = 'vi' }) => {
 
   const handleBulkAction = async (type: 'image' | 'prompt') => {
     if (!state.script) return;
-    for (const key of Object.keys(state.script)) {
-      if (type === 'image') await handleGenImage(key); else await handleGenVideoPrompt(key);
-    }
+    const keys = Object.keys(state.script);
+    const { imageConcurrency, videoPromptConcurrency } = getConcurrencySettings();
+    const concurrency = type === 'image' ? imageConcurrency : videoPromptConcurrency;
+    const handler = type === 'image' ? handleGenImage : handleGenVideoPrompt;
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handler(key) })),
+      concurrency
+    );
   };
 
   return (
@@ -691,21 +697,21 @@ const ReviewDoiThoaiModule: React.FC<Props> = ({ language = 'vi' }) => {
           <div className="flex flex-col items-center gap-12 py-12 border-t border-slate-200 mt-12">
             <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
               <button 
-                onClick={async () => { if (state.script) { for (const k of Object.keys(state.script)) await handleGenImage(k); } }} 
+                onClick={() => handleBulkAction('image')} 
                 className="w-full md:w-auto px-6 py-3 bg-[#25496c] text-white font-black rounded-xl shadow-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-3 uppercase tracking-tight"
               >
                 VẼ TẤT CẢ ẢNH
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" clipRule="evenodd" /></svg>
               </button>
               <button 
-                onClick={async () => { if (state.script) { for (const k of Object.keys(state.script)) await handleGenerateImagePromptForKey(k); } }} 
+                onClick={async () => { if (!state.script) return; const keys = Object.keys(state.script); const { imagePromptConcurrency } = getConcurrencySettings(); await runBatch(keys.map(key => ({ key, fn: () => handleGenerateImagePromptForKey(key) })), imagePromptConcurrency); }} 
                 className="w-full md:w-auto px-6 py-3 bg-[#25496c] text-white font-black rounded-xl shadow-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-3 uppercase tracking-tight"
               >
                 TẠO TẤT CẢ PROMPT ẢNH
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
               </button>
               <button 
-                onClick={async () => { if (state.script) { for (const k of Object.keys(state.script)) await handleGenVideoPrompt(k); } }} 
+                onClick={() => handleBulkAction('prompt')} 
                 className="w-full md:w-auto px-6 py-3 bg-[#25496c] text-white font-black rounded-xl shadow-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-3 uppercase tracking-tight"
               >
                 TẠO TẤT CẢ PROMPT VIDEO

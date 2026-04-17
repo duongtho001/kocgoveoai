@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import * as service from '../services/videoPovService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { PovScriptSegment } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { theme } from '../constants/colors';
@@ -524,25 +525,33 @@ const VideoPovModule: React.FC<VideoPovModuleProps> = ({ language = 'vi' }) => {
   const handleBulkImage = async () => {
     if (state.segments.length === 0) return;
     setIsBulkImageLoading(true);
-    for (const seg of state.segments) { await handleGenImage(seg.id); }
+    const { imageConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenImage(seg.id) })),
+      imageConcurrency
+    );
     setIsBulkImageLoading(false);
   };
 
   const handleBulkImagePrompt = async () => {
     if (state.segments.length === 0) return;
     setIsBulkImagePromptLoading(true);
-    for (const seg of state.segments) { 
-        await handleGenImagePrompt(seg.id);
-    }
+    const { imagePromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenImagePrompt(seg.id) })),
+      imagePromptConcurrency
+    );
     setIsBulkImagePromptLoading(false);
   };
 
   const handleBulkPrompt = async () => {
     if (state.segments.length === 0) return;
     setIsBulkPromptLoading(true);
-    for (const seg of state.segments) { 
-        await handleGenPrompt(seg.id); 
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenPrompt(seg.id) })),
+      videoPromptConcurrency
+    );
     setIsBulkPromptLoading(false);
   };
 

@@ -4,6 +4,7 @@ import { ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import { theme } from '../constants/colors';
 import * as service from '../services/nonFaceReview2Service';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard from '../components/ImageCard';
 import { analyzeDetailedBackground } from '../services/kocReviewService2';
@@ -505,11 +506,13 @@ const NonFaceReviewModule2: React.FC<Props> = ({ language = 'vi' }) => {
 
   const handleBulkAction = async (type: 'image' | 'prompt' | 'imagePrompt') => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      if (type === 'image') await handleGenImageForKey(key);
-      else if (type === 'prompt') await handleGeneratePromptForKey(key);
-      else if (type === 'imagePrompt') await handleGenerateImagePromptForKey(key);
-    }
+    const { imageConcurrency, videoPromptConcurrency, imagePromptConcurrency } = getConcurrencySettings();
+    const concurrency = type === 'image' ? imageConcurrency : type === 'imagePrompt' ? imagePromptConcurrency : videoPromptConcurrency;
+    const handler = type === 'image' ? handleGenImageForKey : type === 'imagePrompt' ? handleGenerateImagePromptForKey : handleGeneratePromptForKey;
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handler(key) })),
+      concurrency
+    );
   };
 
   const downloadAllImagePrompts = () => {

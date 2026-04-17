@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as service from '../services/shopee8sService';
 import { translateText } from '../services/geminiService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { theme } from '../constants/colors';
 import { Shopee8sProduct, ScriptParts, VideoPromptState, GeneratedImage } from '../types';
 import ScriptSection from '../components/ScriptSection';
@@ -624,9 +625,11 @@ const Shopee8sModule: React.FC<Shopee8sModuleProps> = ({ language = 'vi' }) => {
     updateProduct(productId, { isBulkPromptLoading: true });
     try {
       const keys = ['v1', 'v2', 'v3', 'v4'];
-      for (const key of keys) {
-          await handleGenVideoPrompt(productId, key);
-      }
+      const { videoPromptConcurrency } = getConcurrencySettings();
+      await runBatch(
+        keys.map(key => ({ key, fn: () => handleGenVideoPrompt(productId, key) })),
+        videoPromptConcurrency
+      );
     } finally {
       updateProduct(productId, { isBulkPromptLoading: false });
     }
@@ -692,9 +695,11 @@ const Shopee8sModule: React.FC<Shopee8sModuleProps> = ({ language = 'vi' }) => {
     updateProduct(productId, { isBulkPromptLoading: true });
     try {
       const keys = ['v1', 'v2', 'v3', 'v4'];
-      for (const key of keys) {
-          await handleGenerateImagePromptForKey(productId, key);
-      }
+      const { imagePromptConcurrency } = getConcurrencySettings();
+      await runBatch(
+        keys.map(key => ({ key, fn: () => handleGenerateImagePromptForKey(productId, key) })),
+        imagePromptConcurrency
+      );
     } finally {
       updateProduct(productId, { isBulkPromptLoading: false });
     }
@@ -707,9 +712,11 @@ const Shopee8sModule: React.FC<Shopee8sModuleProps> = ({ language = 'vi' }) => {
     updateProduct(productId, { isBulkImageLoading: true });
     try {
       const keys = ['v1', 'v2', 'v3', 'v4'];
-      for (const key of keys) {
-          await handleGenImageForKey(productId, key);
-      }
+      const { imageConcurrency } = getConcurrencySettings();
+      await runBatch(
+        keys.map(key => ({ key, fn: () => handleGenImageForKey(productId, key) })),
+        imageConcurrency
+      );
     } finally {
       updateProduct(productId, { isBulkImageLoading: false });
     }

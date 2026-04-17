@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as service from '../services/timelapseService';
 import { TimelapseSegment, TimelapseContext } from '../types';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { copyToClipboard } from '../utils/clipboard';
 
 declare var JSZip: any;
@@ -268,9 +269,9 @@ const TimelapseModule: React.FC<TimelapseModuleProps> = ({ language = 'vi' }) =>
   };
 
   const handleBulkImage = async () => {
-    for (const seg of segments) {
-      if (!seg.image.url) await handleGenImage(seg.id);
-    }
+    const { imageConcurrency } = getConcurrencySettings();
+    const tasks = segments.filter(seg => !seg.image.url).map(seg => ({ key: String(seg.id), fn: () => handleGenImage(seg.id) }));
+    await runBatch(tasks, imageConcurrency);
   };
 
   const handleGenPrompt = async (id: number) => {
@@ -301,9 +302,9 @@ const TimelapseModule: React.FC<TimelapseModuleProps> = ({ language = 'vi' }) =>
   };
 
   const handleBulkPrompt = async () => {
-    for (const seg of segments) {
-      if (seg.image.url && !seg.videoPrompt.text) await handleGenPrompt(seg.id);
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    const tasks = segments.filter(seg => seg.image.url && !seg.videoPrompt.text).map(seg => ({ key: String(seg.id), fn: () => handleGenPrompt(seg.id) }));
+    await runBatch(tasks, videoPromptConcurrency);
   };
 
   const downloadAllImages = async () => {

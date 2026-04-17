@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as service from '../services/personification2Service';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { Personification2Segment, AnalyzedCharacter } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { safeSaveToLocalStorage } from '../utils/storage';
@@ -436,19 +437,27 @@ const Personification2Module: React.FC<Props> = ({ language = 'vi' }) => {
   };
 
   const handleBulkImage = async () => {
-    for (const s of segments) await handleGenImage(s.id);
+    const { imageConcurrency } = getConcurrencySettings();
+    await runBatch(
+      segments.map((s: any) => ({ key: String(s.id), fn: () => handleGenImage(s.id) })),
+      imageConcurrency
+    );
   };
 
   const handleBulkImagePrompt = async () => {
-    for (const s of segments) {
-      await handleGenImagePrompt(s.id);
-    }
+    const { imagePromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      segments.map((s: any) => ({ key: String(s.id), fn: () => handleGenImagePrompt(s.id) })),
+      imagePromptConcurrency
+    );
   };
 
   const handleBulkVideoPrompt = async () => {
-    for (const s of segments) {
-      await handleGenPrompt(s.id);
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      segments.map((s: any) => ({ key: String(s.id), fn: () => handleGenPrompt(s.id) })),
+      videoPromptConcurrency
+    );
   };
 
   const downloadAllImagesZip = async () => {

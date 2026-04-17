@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ScriptPartKey, ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import * as service from '../services/kocReviewService2';
-import * as flowApi from '../services/flowApiService';
-import * as quotaService from '../services/quotaService';
-import type { UserQuota } from '../services/quotaService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { HOOK_LAYOUTS } from '../components/45hook';
@@ -47,44 +45,11 @@ const ADDRESSING_OPTIONS = [
   "mình - mọi người"
 ];
 
-// Flow API VEO voice options (for video narration) — matches actual demo files
-const FLOW_VOICE_OPTIONS: { value: string; label: string; file: string }[] = [
-  { value: '', label: '-- Không có giọng --', file: '' },
-  { value: 'Achernar', label: '🎙 Achernar', file: 'Achernar.wav' },
-  { value: 'Achird', label: '🎙 Achird', file: 'Achird.wav' },
-  { value: 'Algenib', label: '🎙 Algenib', file: 'Algenib.wav' },
-  { value: 'Algieba', label: '🎙 Algieba', file: 'Algieba.wav' },
-  { value: 'Alnilam', label: '🎙 Alnilam', file: 'Alnilam.wav' },
-  { value: 'Aoede', label: '🎙 Aoede', file: 'Aoede.wav' },
-  { value: 'Autonoe', label: '🎙 Autonoe', file: 'Autonoe.wav' },
-  { value: 'Callirrhoe', label: '🎙 Callirrhoe', file: 'Callirrhoe.wav' },
-  { value: 'Charon', label: '🎙 Charon', file: 'Charon.wav' },
-  { value: 'Despina', label: '🎙 Despina', file: 'Despina.wav' },
-  { value: 'Enceladus', label: '🎙 Enceladus', file: 'Enceladus.wav' },
-];
-
 interface KocReviewModule2Props {
   language?: string;
-  loggedInUser?: string | null;
-  userQuota?: UserQuota | null;
-  onQuotaChange?: (quota: UserQuota | null) => void;
 }
 
-/**
- * Run tasks with limited concurrency (parallel batches of N)
- */
-const runWithConcurrency = async <T,>(
-  items: T[],
-  handler: (item: T) => Promise<void>,
-  concurrency: number = 2
-): Promise<void> => {
-  for (let i = 0; i < items.length; i += concurrency) {
-    const batch = items.slice(i, i + concurrency);
-    await Promise.allSettled(batch.map(item => handler(item)));
-  }
-};
-
-const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', loggedInUser, userQuota, onQuotaChange }) => {
+const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) => {
   const storageKey = "koc_project_v23_clone_instance";
   const [state, setState] = useState<any>({
     faceFile: null,
@@ -101,14 +66,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     addressing: '',
     targetAudience: '',
     imageStyle: 'Realistic',
-    imageQuality: 'normal' as 'normal' | '4K',
-    videoVoice: '' as string,
-    batchConcurrency: 2,
     sceneCount: 5,
-    mergedVideoUrl: '' as string,
-    mergeLoading: false,
-    showGuide: false,
-    showHistory: false,
     productFiles: [], 
     productPreviewUrls: [],
     productName: '',
@@ -588,8 +546,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         language
       );
       setState((prev: any) => ({ ...prev, script, scriptLayout: layoutToUse }));
-      // Auto-save to history (pass script directly to avoid stale closure)
-      try { saveToHistory(script); } catch (e) { console.warn('[History] auto-save failed', e); }
     } catch (e) {
       console.error(e);
     } finally {
@@ -764,16 +720,9 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         poseLabel,
         bgRefPart,
         currentFormat,
-        language,
-        state.imageQuality
+        language
       );
       setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url, loading: false } } }));
-      // Track quota
-      if (loggedInUser) {
-        await quotaService.incrementImageUsage(loggedInUser);
-        const q = await quotaService.getUserQuota(loggedInUser);
-        onQuotaChange?.(q);
-      }
     } catch (e) {
       console.error(e);
       setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Failed' } } }));
@@ -806,13 +755,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
   };
 
   const handleBulkImage = async () => {
-    // Check quota
-    if (userQuota && userQuota.imagesRemaining <= 0) {
-      alert('Đã hết quota ảnh. Liên hệ Admin để nâng gói.');
-      return;
-    }
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    await runWithConcurrency(keys, handleGenImageForKey, state.batchConcurrency);
+    const { imageConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGenImageForKey(key) })),
+      imageConcurrency
+    );
   };
 
   const handleGeneratePromptForKey = async (key: string) => {
@@ -851,167 +799,20 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
 
   const handleBulkImagePrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    await runWithConcurrency(keys, handleGenerateImagePromptForKey, state.batchConcurrency);
+    const { imagePromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGenerateImagePromptForKey(key) })),
+      imagePromptConcurrency
+    );
   };
 
   const handleBulkPrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    await runWithConcurrency(keys, handleGeneratePromptForKey, state.batchConcurrency);
-  };
-
-  // Flow API: Tạo video cho từng cảnh
-  const handleFlowVideoForKey = async (key: string) => {
-    if (!state.videoPrompts[key]?.text) {
-      alert(`Cảnh ${key}: Chưa có Video Prompt.`);
-      return;
-    }
-    const imageUrl = state.images[key]?.url || '';
-    setState((prev: any) => ({
-      ...prev,
-      images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
-    }));
-    try {
-      let videoUrl: string;
-      const voiceOpt = state.videoVoice || undefined;
-      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http') || imageUrl.startsWith('blob:'))) {
-        videoUrl = await flowApi.base64ImageToVideo(
-          imageUrl,
-          state.videoPrompts[key].text,
-          '9:16',
-          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`),
-          voiceOpt
-        );
-      } else {
-        const result = await flowApi.textToVideo(
-          [state.videoPrompts[key].text],
-          { aspect_ratio: '9:16', voice: voiceOpt },
-          (job) => console.log(`[Flow T2V ${key}] ${job.progress}%`)
-        );
-        videoUrl = result.videoUrl;
-      }
-      setState((prev: any) => ({
-        ...prev,
-        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
-      }));
-      // Track quota
-      if (loggedInUser) {
-        await quotaService.incrementVideoUsage(loggedInUser);
-        const q = await quotaService.getUserQuota(loggedInUser);
-        onQuotaChange?.(q);
-      }
-    } catch (e) {
-      console.error(`Flow video for ${key} failed`, e);
-      setState((prev: any) => ({
-        ...prev,
-        images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
-      }));
-    }
-  };
-
-  // Bulk: Tạo tất cả video (luôn I2V từ ảnh)
-  const handleBulkVideo = async () => {
-    // Check quota
-    if (userQuota && userQuota.videosRemaining <= 0) {
-      alert('Đã hết quota video. Liên hệ Admin để nâng gói.');
-      return;
-    }
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
-      .filter(key => state.videoPrompts[key]?.text && state.images[key]?.url);
-    await runWithConcurrency(keys, handleFlowVideoForKey, state.batchConcurrency);
-  };
-
-  // Merge: Nối tất cả video thành 1
-  const handleMergeVideos = async () => {
-    const videoKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
-      .filter(key => state.images[key]?.videoUrl);
-    
-    if (videoKeys.length < 2) {
-      alert('Cần ít nhất 2 video để nối.');
-      return;
-    }
-
-    setState((p: any) => ({ ...p, mergeLoading: true, mergedVideoUrl: '' }));
-    try {
-      console.log(`[Merge] Uploading ${videoKeys.length} videos...`);
-      // Upload all video blob URLs to server to get paths
-      const videoPaths: string[] = [];
-      for (const key of videoKeys) {
-        const videoUrl = state.images[key].videoUrl;
-        const resp = await fetch(videoUrl);
-        const blob = await resp.blob();
-        const file = new File([blob], `scene_${key}.mp4`, { type: 'video/mp4' });
-        const path = await flowApi.uploadVideo(file);
-        videoPaths.push(path);
-        console.log(`[Merge] Uploaded ${key}: ${path}`);
-      }
-
-      console.log(`[Merge] Merging ${videoPaths.length} videos...`);
-      const result = await flowApi.mergeVideos(
-        videoPaths,
-        `koc_${state.productName || 'merged'}`,
-        (job) => console.log(`[Merge] ${job.progress}%`)
-      );
-
-      setState((p: any) => ({ ...p, mergedVideoUrl: result.videoUrl, mergeLoading: false }));
-      console.log('[Merge] ✅ Done:', result.videoUrl);
-    } catch (e) {
-      console.error('[Merge] Failed:', e);
-      alert('Nối video thất bại: ' + (e as Error).message);
-      setState((p: any) => ({ ...p, mergeLoading: false }));
-    }
-  };
-
-  // DỰ ÁN TỰ ĐỘNG: Pipeline đầy đủ với nút Stop
-  const [autoRunning, setAutoRunning] = useState(false);
-  const [autoStep, setAutoStep] = useState('');
-  const abortRef = useRef(false);
-
-  const handleStopAuto = () => {
-    abortRef.current = true;
-    setAutoRunning(false);
-    setAutoStep('⏹ Đã dừng');
-    setTimeout(() => setAutoStep(''), 3000);
-  };
-
-  const handleAutoProject = async () => {
-    if (autoRunning) return;
-    abortRef.current = false;
-    setAutoRunning(true);
-    try {
-      // Step 1: Tạo Prompt Ảnh
-      setAutoStep('1/4: Tạo Prompt Ảnh...');
-      console.log('[AutoProject] Step 1/4: Tạo Prompt Ảnh...');
-      await handleBulkImagePrompt();
-      if (abortRef.current) return;
-      
-      // Step 2: Tạo Ảnh (R2I/T2I)
-      setAutoStep('2/4: Tạo Ảnh...');
-      console.log('[AutoProject] Step 2/4: Tạo Ảnh...');
-      await handleBulkImage();
-      if (abortRef.current) return;
-      
-      // Step 3: Tạo Video Prompt
-      setAutoStep('3/4: Tạo Video Prompt...');
-      console.log('[AutoProject] Step 3/4: Tạo Video Prompt...');
-      await handleBulkPrompt();
-      if (abortRef.current) return;
-      
-      // Step 4: Tạo Video từ Ảnh (I2V)
-      setAutoStep('4/4: Tạo Video (I2V)...');
-      console.log('[AutoProject] Step 4/4: Tạo Video...');
-      await handleBulkVideo();
-      
-      if (!abortRef.current) {
-        setAutoStep('✅ Hoàn tất!');
-        console.log('[AutoProject] ✅ Hoàn tất!');
-        setTimeout(() => setAutoStep(''), 5000);
-      }
-    } catch (e) {
-      console.error('[AutoProject] Lỗi:', e);
-      setAutoStep('❌ Lỗi: ' + (e as Error).message);
-    } finally {
-      setAutoRunning(false);
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGeneratePromptForKey(key) })),
+      videoPromptConcurrency
+    );
   };
 
   const downloadAllImages = async () => {
@@ -1092,62 +893,9 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     URL.revokeObjectURL(url);
   };
 
-  // Lịch sử đã tạo
-  const HISTORY_KEY = 'koc_v2_project_history';
-  
-  const getHistory = (): any[] => {
-    try {
-      return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-    } catch { return []; }
-  };
-
-  const saveToHistory = (overrideScript?: any) => {
-    try {
-      const scriptToSave = overrideScript || state.script;
-      if (!state.productName || !scriptToSave) return;
-      const history = getHistory();
-      // Exclude File objects from serialization (they can't be JSON.stringified)
-      const { productFiles, faceFile, outfitFile, backgroundFile, ...serializableState } = state;
-      const safeState = { ...serializableState, script: scriptToSave };
-      const entry = {
-        id: Date.now(),
-        name: state.productName,
-        date: new Date().toLocaleDateString('vi-VN'),
-        time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        sceneCount: state.sceneCount,
-        imageStyle: state.imageStyle,
-        imageQuality: state.imageQuality,
-        thumbnail: state.productPreviewUrls?.[0] || '',
-        stateSnapshot: JSON.stringify(safeState),
-      };
-      // Keep last 20 entries
-      history.unshift(entry);
-      if (history.length > 20) history.pop();
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    } catch (e) {
-      console.warn('[History] Save failed:', e);
-    }
-  };
-
-  const loadFromHistory = (entry: any) => {
-    try {
-      const restored = JSON.parse(entry.stateSnapshot);
-      setState(restored);
-    } catch (e) {
-      alert('Không thể khôi phục dự án này.');
-    }
-  };
-
-  const deleteFromHistory = (id: number) => {
-    const history = getHistory().filter((h: any) => h.id !== id);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    setState((p: any) => ({ ...p })); // force re-render
-  };
-
   const hasGeneratedItems = state.script && Object.values(state.images).some((img: any) => img.url);
 
   const currentSceneCount = typeof state.sceneCount === 'object' ? (state.sceneCount.count || 0) : (state.sceneCount || 0);
-
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 koc-review-v2-container">
@@ -1160,117 +908,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
           border-color: #ccc !important;
         }
       ` }} />
-
-      {/* HƯỚNG DẪN + LỊCH SỬ */}
-      <div className="flex gap-3 mb-4">
-        <button
-          onClick={() => setState((p: any) => ({ ...p, showGuide: !p.showGuide, showHistory: false }))}
-          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-            state.showGuide ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
-          }`}
-        >
-          📖 Hướng dẫn
-        </button>
-        <button
-          onClick={() => setState((p: any) => ({ ...p, showHistory: !p.showHistory, showGuide: false }))}
-          className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-            state.showHistory ? 'bg-violet-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
-          }`}
-        >
-          🕐 Lịch sử ({getHistory().length})
-        </button>
-      </div>
-
-      {/* GUIDE SECTION */}
-      {state.showGuide && (
-        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 mb-6 animate-fadeIn">
-          <h3 className="text-sm font-black text-blue-800 uppercase tracking-tight mb-4 flex items-center gap-2">
-            📖 HƯỚNG DẪN SỬ DỤNG KOC STUDIO V2
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-700">
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">1</span>
-                <div><b>Upload ảnh sản phẩm</b> (tối đa 3 ảnh) + ảnh mặt mẫu + trang phục nếu có</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">2</span>
-                <div><b>Điền thông tin</b>: Tên SP, USP, đối tượng, giới tính, giọng điệu, xưng hô</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">3</span>
-                <div><b>Chọn cài đặt</b>: Số cảnh, phong cách (Chân thực/3D), chất lượng (Nhanh/4K), giọng video, luồng song song</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center flex-shrink-0">4</span>
-                <div><b>Nhấn "Bắt đầu tạo kịch bản"</b> để AI viết kịch bản review</div>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-violet-600 text-white font-black flex items-center justify-center flex-shrink-0">5</span>
-                <div><b>Dự án tự động</b>: Nhấn nút tím để chạy pipeline đầy đủ (Prompt → Ảnh → Video Prompt → Video)</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-violet-600 text-white font-black flex items-center justify-center flex-shrink-0">6</span>
-                <div><b>Hoặc chạy từng bước</b>: Tạo Prompt Ảnh → Tạo Ảnh → Tạo Prompt Video → Tạo Video</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center flex-shrink-0">7</span>
-                <div><b>Nối Video</b>: Khi có ≥2 video, nhấn "Nối Video" để ghép tất cả thành 1 video</div>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center flex-shrink-0">8</span>
-                <div><b>Tải xuống</b>: Tải ảnh (ZIP), prompt ảnh, prompt video hoặc video đã nối</div>
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-            <p className="text-xs text-amber-800 font-bold">💡 <b>Mẹo</b>: Dùng "Luồng song song" 2x-3x để tăng tốc tạo ảnh/video. Chọn "Nhanh" nếu không cần 4K upscale.</p>
-          </div>
-        </div>
-      )}
-
-      {/* HISTORY SECTION */}
-      {state.showHistory && (
-        <div className="bg-gradient-to-br from-violet-50 to-purple-50 rounded-2xl border border-violet-200 p-6 mb-6 animate-fadeIn">
-          <h3 className="text-sm font-black text-violet-800 uppercase tracking-tight mb-4 flex items-center gap-2">
-            🕐 LỊCH SỬ DỰ ÁN ĐÃ TẠO
-          </h3>
-          {getHistory().length === 0 ? (
-            <p className="text-xs text-slate-500 text-center py-8">Chưa có dự án nào. Hãy tạo kịch bản để lưu lịch sử.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto pr-1">
-              {getHistory().map((entry: any) => (
-                <div key={entry.id} className="bg-white rounded-xl border border-slate-200 p-4 flex gap-3 hover:shadow-md transition-all group">
-                  {entry.thumbnail && (
-                    <img src={entry.thumbnail} className="w-12 h-16 object-cover rounded-lg border border-slate-100 flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-xs font-black text-slate-800 truncate">{entry.name}</h4>
-                    <p className="text-[10px] text-slate-400 font-bold">{entry.date} {entry.time}</p>
-                    <p className="text-[10px] text-slate-500">{entry.sceneCount} cảnh • {entry.imageStyle} • {entry.imageQuality}</p>
-                    <div className="flex gap-1 mt-2">
-                      <button
-                        onClick={() => loadFromHistory(entry)}
-                        className="px-2 py-1 bg-violet-100 text-violet-700 rounded-md text-[10px] font-black hover:bg-violet-200 transition-all"
-                      >
-                        📂 Mở
-                      </button>
-                      <button
-                        onClick={() => { if (confirm('Xóa dự án này?')) deleteFromHistory(entry.id); }}
-                        className="px-2 py-1 bg-red-50 text-red-500 rounded-md text-[10px] font-black hover:bg-red-100 transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-8">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
           <div className="md:col-span-5 flex flex-col gap-4">
@@ -1450,7 +1087,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Thời lượng (Scenes)</label>
                 <select value={currentSceneCount} onChange={e => setState(p => ({ ...p, sceneCount: parseInt(e.target.value) }))} className={`w-full p-3 border rounded-xl bg-white focus:ring-2 ${theme.colors.secondaryBg} outline-none font-bold text-slate-700`}>
@@ -1476,64 +1113,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                   >
                     3D Animation
                   </button>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Chất lượng ảnh</label>
-                <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
-                  <button
-                    onClick={() => setState(p => ({ ...p, imageQuality: 'normal' as any }))}
-                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === 'normal' ? 'text-white shadow-md bg-emerald-600' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    ⚡ Nhanh
-                  </button>
-                  <button
-                    onClick={() => setState(p => ({ ...p, imageQuality: '4K' as any }))}
-                    className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${state.imageQuality === '4K' ? 'text-white shadow-md bg-violet-600' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    🔥 4K Upscale
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">🎙 Giọng video (VEO Voice)</label>
-                <div className="flex gap-2">
-                  <select
-                    value={state.videoVoice}
-                    onChange={e => setState(p => ({ ...p, videoVoice: e.target.value }))}
-                    className={`flex-1 p-2.5 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none text-sm font-bold`}
-                  >
-                    {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
-                  </select>
-                  {state.videoVoice && (() => {
-                    const selectedVoice = FLOW_VOICE_OPTIONS.find(v => v.value === state.videoVoice);
-                    return selectedVoice?.file ? (
-                      <button
-                        onClick={() => {
-                          const audio = new Audio(`/audio-demo/${selectedVoice.file}`);
-                          audio.play().catch(e => console.error('Audio play failed:', e));
-                        }}
-                        className="w-10 h-10 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-sm font-black flex items-center justify-center flex-shrink-0"
-                        title={`Nghe thử giọng ${selectedVoice.value}`}
-                      >
-                        🔊
-                      </button>
-                    ) : null;
-                  })()}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">⚡ Luồng song song</label>
-                <div className="flex bg-slate-50 p-1 rounded-xl border border-slate-200">
-                  {[1, 2, 3, 5].map(n => (
-                    <button
-                      key={n}
-                      onClick={() => setState(p => ({ ...p, batchConcurrency: n }))}
-                      className={`flex-1 py-2 text-[10px] font-black rounded-lg transition-all ${state.batchConcurrency === n ? 'text-white shadow-md bg-sky-600' : 'text-slate-400 hover:text-slate-600'}`}
-                    >
-                      {n}x
-                    </button>
-                  ))}
                 </div>
               </div>
             </div>
@@ -1651,7 +1230,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                   onGeneratePrompt={() => handleGeneratePromptForKey(key)}
                   onGenerateImagePrompt={() => handleGenerateImagePromptForKey(key)}
                   onRegenerate={() => handleGenImageForKey(key)}
-                  onGenerateVideo={() => handleFlowVideoForKey(key)}
                   onTranslate={() => { }}
                   onUpload={(file) => handleUploadImageForKey(key, file)}
                   onDelete={() => handleDeleteImageForKey(key)}
@@ -1664,136 +1242,33 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             ))}
           </div>
 
-          <div className="flex flex-col items-center gap-8 py-12">
-            {/* NÚT DỰ ÁN TỰ ĐỘNG + STOP */}
-            <div className="w-full px-4 space-y-3">
-              <div className="flex gap-3">
-                <button
-                  onClick={handleAutoProject}
-                  disabled={autoRunning}
-                  className={`flex-1 py-5 text-white font-black rounded-2xl shadow-2xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
-                    autoRunning
-                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 cursor-wait'
-                      : 'bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 hover:scale-[1.02] active:scale-95'
-                  }`}
-                >
-                  {autoRunning ? (
-                    <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> {autoStep || 'ĐANG CHẠY...'}</>
-                  ) : (
-                    <>🚀 DỰ ÁN TỰ ĐỘNG (Prompt → Ảnh → Video Prompt → Video)</>
-                  )}
-                </button>
-                {autoRunning && (
-                  <button
-                    onClick={handleStopAuto}
-                    className="px-6 py-5 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-2xl transition-all active:scale-95 uppercase tracking-widest text-sm"
-                  >
-                    ⏹ DỪNG
-                  </button>
-                )}
-              </div>
-              {autoStep && !autoRunning && (
-                <div className="text-center text-sm font-bold text-slate-600 bg-slate-100 rounded-xl py-2">{autoStep}</div>
-              )}
-            </div>
-
+          <div className="flex flex-col items-center gap-12 py-12">
             <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
               <button
-                onClick={handleBulkImagePrompt}
-                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
+                onClick={handleBulkImage}
+                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                📝 Tạo Prompt ảnh
+                Vẽ tất cả ảnh
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" clipRule="evenodd" /></svg>
               </button>
               <button
-                onClick={handleBulkImage}
-                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
+                onClick={handleBulkImagePrompt}
+                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                🖼 Tạo Ảnh (R2I)
+                Tạo tất cả Prompt ảnh
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
               </button>
               <button
                 onClick={handleBulkPrompt}
-                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest"
+                className="w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
                 style={{ backgroundColor: 'var(--primary-color)' }}
               >
-                ⚡ Tạo Prompt video
-              </button>
-              <button
-                onClick={handleBulkVideo}
-                className="w-full md:w-auto px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest bg-gradient-to-r from-violet-600 to-fuchsia-600"
-              >
-                🎥 Tạo Video (I2V)
+                Tạo tất cả Prompt video
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>
               </button>
             </div>
-
-            {/* VIDEO GALLERY */}
-            {(() => {
-              const videoKeys = Array.from({ length: currentSceneCount }, (_, i) => `v${i + 1}`)
-                .filter(key => state.images[key]?.videoUrl);
-              if (videoKeys.length === 0) return null;
-              return (
-                <div className="w-full px-4">
-                  <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
-                    <h3 className="text-sm font-black text-white uppercase tracking-tight mb-4">🎬 VIDEO ĐÃ TẠO ({videoKeys.length}/{currentSceneCount})</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                      {videoKeys.map((key, idx) => (
-                        <div key={key} className="space-y-2">
-                          <video
-                            src={state.images[key].videoUrl}
-                            controls
-                            playsInline
-                            className="w-full aspect-[9/16] bg-black rounded-xl border border-slate-700"
-                          />
-                          <p className="text-xs text-slate-400 font-bold text-center">Cảnh {parseInt(key.replace('v',''))}</p>
-                        </div>
-                      ))}
-                    </div>
-                    {videoKeys.length >= 2 && (
-                      <div className="mt-4 flex flex-col items-center gap-4">
-                        <button
-                          onClick={handleMergeVideos}
-                          disabled={state.mergeLoading}
-                          className={`w-full py-4 rounded-xl text-sm font-black uppercase tracking-wider transition-all flex items-center justify-center gap-3 ${
-                            state.mergeLoading
-                              ? 'bg-amber-500/20 text-amber-400 cursor-wait'
-                              : state.mergedVideoUrl
-                                ? 'bg-emerald-600 text-white shadow-lg hover:bg-emerald-700 active:scale-95'
-                                : 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg hover:scale-[1.02] active:scale-95'
-                          }`}
-                        >
-                          {state.mergeLoading ? (
-                            <><div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" /> Đang nối video...</>
-                          ) : state.mergedVideoUrl ? (
-                            <><span>🔄</span> Nối lại Video ({videoKeys.length} cảnh)</>
-                          ) : (
-                            <><span>🎬</span> Nối Video ({videoKeys.length} cảnh → 1 video)</>
-                          )}
-                        </button>
-                        {state.mergedVideoUrl && (
-                          <div className="w-full space-y-3">
-                            <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest text-center">✅ VIDEO ĐÃ NỐI</h4>
-                            <video
-                              src={state.mergedVideoUrl}
-                              controls
-                              playsInline
-                              className="w-full max-w-md mx-auto aspect-[9/16] bg-black rounded-xl border-2 border-emerald-500/30"
-                            />
-                            <a
-                              href={state.mergedVideoUrl}
-                              download={`koc_merged_${state.productName || 'video'}.mp4`}
-                              className="block w-full max-w-md mx-auto py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-center text-sm uppercase tracking-wider transition-all active:scale-95"
-                            >
-                              ⬇ Tải Video Đã Nối
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
 
             {hasGeneratedItems && (
               <div className="flex flex-col md:flex-row items-center justify-center gap-4 border-t border-slate-200 w-full pt-12">
@@ -1818,7 +1293,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                   className="w-full md:w-auto px-8 py-5 text-white font-black rounded-2xl shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-widest text-sm"
                   style={{ backgroundColor: 'var(--primary-color)' }}
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1.01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   Tải Video Prompt (.txt)
                 </button>
               </div>

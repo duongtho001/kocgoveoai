@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import * as service from '../services/personificationService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { PersonificationSegment } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import { safeSaveToLocalStorage } from '../utils/storage';
@@ -509,27 +510,33 @@ const PersonificationModule: React.FC<PersonificationModuleProps> = ({ language 
   const handleBulkImage = async () => {
     if (state.segments.length === 0) return;
     setState((p: any) => ({ ...p, isBulkImageLoading: true }));
-    for (const seg of state.segments) {
-      await handleGenImage(seg.id);
-    }
+    const { imageConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenImage(seg.id) })),
+      imageConcurrency
+    );
     setState((p: any) => ({ ...p, isBulkImageLoading: false }));
   };
 
   const handleBulkImagePrompt = async () => {
     if (state.segments.length === 0) return;
     setState((p: any) => ({ ...p, isBulkPromptLoading: true }));
-    for (const seg of state.segments) {
-      await handleGenImagePrompt(seg.id);
-    }
+    const { imagePromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenImagePrompt(seg.id) })),
+      imagePromptConcurrency
+    );
     setState((p: any) => ({ ...p, isBulkPromptLoading: false }));
   };
 
   const handleBulkVideoPrompt = async () => {
     if (state.segments.length === 0) return;
     setState((p: any) => ({ ...p, isBulkPromptLoading: true }));
-    for (const seg of state.segments) {
-      await handleGenPrompt(seg.id);
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      state.segments.map((seg: any) => ({ key: String(seg.id), fn: () => handleGenPrompt(seg.id) })),
+      videoPromptConcurrency
+    );
     setState((p: any) => ({ ...p, isBulkPromptLoading: false }));
   };
 

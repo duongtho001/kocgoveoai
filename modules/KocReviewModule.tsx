@@ -5,12 +5,12 @@ import { ScriptPartKey, ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import { LANGUAGE_CONSTRAINTS } from '../utils/languageUtils';
 import * as service from '../services/kocReviewService';
+import { runBatch, getConcurrencySettings } from '../services/concurrencyService';
 import { translateText } from '../services/geminiService';
 import { analyzeDetailedBackground } from '../services/kocReviewService2';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { theme } from '../constants/colors';
-import * as flowApi from '../services/flowApiService';
 
 declare var JSZip: any;
 
@@ -83,7 +83,6 @@ interface SceneItemProps {
   handleUploadImageForKey: (key: string, file: File) => void;
   handleDeleteImageForKey: (key: string) => void;
   handleTranslateForKey: (key: string, type: 'image' | 'video') => void;
-  handleFlowVideoForKey: (key: string) => void;
   language: string;
 }
 
@@ -99,7 +98,6 @@ const SceneItem: React.FC<SceneItemProps> = ({
   handleUploadImageForKey,
   handleDeleteImageForKey,
   handleTranslateForKey,
-  handleFlowVideoForKey,
   language
 }) => {
   const dragControls = useDragControls();
@@ -137,7 +135,6 @@ const SceneItem: React.FC<SceneItemProps> = ({
         onGeneratePrompt={() => handleGeneratePromptForKey(sceneKey)}
         onGenerateImagePrompt={() => handleGenerateImagePromptForKey(sceneKey)}
         onRegenerate={() => handleGenImageForKey(sceneKey)}
-        onGenerateVideo={() => handleFlowVideoForKey(sceneKey)}
         onTranslate={(type) => handleTranslateForKey(sceneKey, type)}
         onUpload={(file) => handleUploadImageForKey(sceneKey, file)}
         onDelete={() => handleDeleteImageForKey(sceneKey)}
@@ -190,10 +187,7 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
     images: {},
     imagePrompts: {}, // Lưu trữ technical image prompts
     videoPrompts: {},
-    sceneOrder: [],
-    selectedVideos: {} as Record<string, boolean>,
-    isMergingVideos: false,
-    mergedVideoUrl: null as string | null,
+    sceneOrder: []
   });
 
   const productInputRef = useRef<HTMLInputElement>(null);
@@ -793,218 +787,21 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
 
   const handleBulkImagePrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGenerateImagePromptForKey(key);
-    }
+    const { imagePromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGenerateImagePromptForKey(key) })),
+      imagePromptConcurrency
+    );
   };
 
   const handleBulkImage = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGenImageForKey(key);
-    }
+    const { imageConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGenImageForKey(key) })),
+      imageConcurrency
+    );
   };
-
-  // ============================================================
-  // Flow API Integration: Tạo ảnh + video qua Flow API
-  // ============================================================
-
-  const handleFlowImageForKey = async (key: string) => {
-    if (!state.imagePrompts[key]?.text) {
-      alert(`Cảnh ${key}: Chưa có Image Prompt. Hãy tạo prompt ảnh trước.`);
-      return;
-    }
-    setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: true } } }));
-    try {
-      const imageUrl = await flowApi.generateFlowImage(
-        state.imagePrompts[key].text,
-        '9:16',
-        (job) => console.log(`[Flow T2I ${key}] ${job.progress}%`)
-      );
-      setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url: imageUrl, loading: false } } }));
-    } catch (e) {
-      console.error(`Flow image for ${key} failed`, e);
-      setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Flow API failed' } } }));
-    }
-  };
-
-  const handleFlowVideoForKey = async (key: string) => {
-    if (!state.videoPrompts[key]?.text) {
-      alert(`Cảnh ${key}: Chưa có Video Prompt.`);
-      return;
-    }
-    const imageUrl = state.images[key]?.url;
-    setState((prev: any) => ({
-      ...prev,
-      images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
-    }));
-    try {
-      let videoUrl: string;
-      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http'))) {
-        // I2V: Có ảnh → upload ảnh → tạo video từ ảnh
-        videoUrl = await flowApi.base64ImageToVideo(
-          imageUrl,
-          state.videoPrompts[key].text,
-          '9:16',
-          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`)
-        );
-      } else {
-        // T2V: Không có ảnh → tạo video từ prompt
-        const result = await flowApi.textToVideo(
-          [state.videoPrompts[key].text],
-          { aspect_ratio: '9:16' },
-          (job) => console.log(`[Flow T2V ${key}] ${job.progress}%`)
-        );
-        videoUrl = result.videoUrl;
-      }
-      setState((prev: any) => ({
-        ...prev,
-        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
-      }));
-    } catch (e) {
-      console.error(`Flow video for ${key} failed`, e);
-      setState((prev: any) => ({
-        ...prev,
-        images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
-      }));
-    }
-  };
-
-  const handleBulkFlowImage = async () => {
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      if (state.imagePrompts[key]?.text) {
-        await handleFlowImageForKey(key);
-      }
-    }
-  };
-
-  const handleBulkFlowVideo = async () => {
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      if (state.videoPrompts[key]?.text) {
-        await handleFlowVideoForKey(key);
-      }
-    }
-  };
-
-  /**
-   * DỰ ÁN TỰ ĐỘNG (Full Pipeline)
-   * Tự động: Tạo Image Prompt → Tạo Ảnh (Flow API) → Tạo Video Prompt → Tạo Video (Flow API)
-   */
-  const handleAutoProject = async () => {
-    if (!state.script) {
-      alert('Vui lòng tạo kịch bản trước khi chạy Dự Án Tự Động.');
-      return;
-    }
-
-    if (!flowApi.isFlowApiAvailable()) {
-      alert('Flow API chưa được cấu hình. Kiểm tra VITE_FLOW_API_URL trong .env.');
-      return;
-    }
-
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-
-    // Step 1: Tạo Image Prompt cho tất cả cảnh
-    console.log('🎬 [Auto] Step 1/4: Tạo Image Prompts...');
-    for (const key of keys) {
-      if (!state.imagePrompts[key]?.text) {
-        await handleGenerateImagePromptForKey(key);
-      }
-    }
-
-    // Step 2: Tạo Ảnh từ Image Prompt (Flow API T2I)
-    console.log('🖼️ [Auto] Step 2/4: Tạo Ảnh qua Flow API...');
-    for (const key of keys) {
-      if (!state.images[key]?.url) {
-        await handleFlowImageForKey(key);
-      }
-    }
-
-    // Step 3: Tạo Video Prompt cho tất cả cảnh
-    console.log('📝 [Auto] Step 3/4: Tạo Video Prompts...');
-    for (const key of keys) {
-      if (!state.videoPrompts[key]?.text) {
-        await handleGeneratePromptForKey(key);
-      }
-    }
-
-    // Step 4: Tạo Video từ Ảnh + Video Prompt (Flow API I2V)
-    console.log('🎥 [Auto] Step 4/4: Tạo Video qua Flow API...');
-    for (const key of keys) {
-      await handleFlowVideoForKey(key);
-    }
-
-    console.log('✅ [Auto] Hoàn tất Dự Án Tự Động!');
-    alert('✅ Dự Án Tự Động hoàn tất! Tất cả ảnh và video đã được tạo.');
-  };
-
-  // ============================================================
-  // Video Selection & Merge
-  // ============================================================
-
-  const handleToggleVideoSelect = (key: string) => {
-    setState((prev: any) => ({
-      ...prev,
-      selectedVideos: {
-        ...prev.selectedVideos,
-        [key]: !prev.selectedVideos[key]
-      }
-    }));
-  };
-
-  const handleSelectAllVideos = () => {
-    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    const hasVideos = keys.filter(k => state.images[k]?.videoUrl);
-    const allSelected = hasVideos.every(k => state.selectedVideos[k]);
-    const newSelected: Record<string, boolean> = {};
-    hasVideos.forEach(k => { newSelected[k] = !allSelected; });
-    setState((prev: any) => ({ ...prev, selectedVideos: newSelected }));
-  };
-
-  const handleMergeVideos = async () => {
-    const keys = (state.sceneOrder && state.sceneOrder.length > 0)
-      ? state.sceneOrder
-      : Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-
-    const selectedKeys = keys.filter((k: string) => state.selectedVideos[k] && state.images[k]?.videoUrl);
-
-    if (selectedKeys.length < 2) {
-      alert('Vui lòng chọn ít nhất 2 video để nối.');
-      return;
-    }
-
-    setState((prev: any) => ({ ...prev, isMergingVideos: true, mergedVideoUrl: null }));
-
-    try {
-      // Convert video URLs to server paths
-      console.log(`🎬 [Merge] Đang chuẩn bị ${selectedKeys.length} video...`);
-      const videoPaths: string[] = [];
-      for (const key of selectedKeys) {
-        const videoUrl = state.images[key].videoUrl;
-        const path = await flowApi.videoUrlToPath(videoUrl);
-        videoPaths.push(path);
-        console.log(`  ✓ ${key}: ${path}`);
-      }
-
-      // Call merge API
-      console.log('🔗 [Merge] Đang nối video...');
-      const result = await flowApi.mergeVideos(
-        videoPaths,
-        `koc_${state.productName || 'project'}_merged`,
-        (job) => console.log(`[Merge] ${job.progress}%`)
-      );
-
-      setState((prev: any) => ({ ...prev, isMergingVideos: false, mergedVideoUrl: result.videoUrl }));
-      console.log('✅ [Merge] Nối video hoàn tất!');
-    } catch (e) {
-      console.error('Merge failed', e);
-      setState((prev: any) => ({ ...prev, isMergingVideos: false }));
-      alert(`Lỗi nối video: ${(e as Error).message}`);
-    }
-  };
-
-  const selectedVideoCount = Object.values(state.selectedVideos).filter(Boolean).length;
 
   const handleGeneratePromptForKey = async (key: string) => {
     setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
@@ -1040,9 +837,11 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
 
   const handleBulkPrompt = async () => {
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    for (const key of keys) {
-      await handleGeneratePromptForKey(key);
-    }
+    const { videoPromptConcurrency } = getConcurrencySettings();
+    await runBatch(
+      keys.map(key => ({ key, fn: () => handleGeneratePromptForKey(key) })),
+      videoPromptConcurrency
+    );
   };
 
   const handleTranslateForKey = async (key: string, type: 'image' | 'video') => {
@@ -1457,7 +1256,6 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
                 handleUploadImageForKey={handleUploadImageForKey}
                 handleDeleteImageForKey={handleDeleteImageForKey}
                 handleTranslateForKey={handleTranslateForKey}
-                handleFlowVideoForKey={handleFlowVideoForKey}
                 language={language}
               />
             ))}
@@ -1488,29 +1286,6 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
               </button>
             </div>
 
-            {/* Flow API Automation */}
-            <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
-              <button
-                onClick={handleAutoProject}
-                className="w-full md:w-auto px-10 py-5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-black rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ring-2 ring-violet-300/50"
-              >
-                🚀 DỰ ÁN TỰ ĐỘNG
-                <span className="text-[10px] font-bold opacity-80 normal-case">(Prompt→Ảnh→Video)</span>
-              </button>
-              <button
-                onClick={handleBulkFlowImage}
-                className="w-full md:w-auto px-8 py-4 bg-emerald-600 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
-              >
-                🖼️ Tạo Ảnh Flow API
-              </button>
-              <button
-                onClick={handleBulkFlowVideo}
-                className="w-full md:w-auto px-8 py-4 bg-orange-600 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
-              >
-                🎥 Tạo Video Flow API
-              </button>
-            </div>
-
             {hasGeneratedItems && (
               <div className="flex flex-col md:flex-row items-center justify-center gap-4 border-t border-slate-200 w-full pt-12">
                 <button
@@ -1534,125 +1309,6 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1.01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   Tải Video Prompt (.txt)
                 </button>
-              </div>
-            )}
-
-            {/* Video Selection & Merge Section */}
-            {Object.values(state.images).some((img: any) => img.videoUrl) && (
-              <div className="border-t border-slate-200 w-full pt-12 space-y-6">
-                <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-6 rounded-2xl">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2">
-                      🎬 Chọn Video & Nối
-                      {selectedVideoCount > 0 && (
-                        <span className="bg-violet-500 text-white text-xs px-2 py-0.5 rounded-full">
-                          {selectedVideoCount} đã chọn
-                        </span>
-                      )}
-                    </h3>
-                    <button
-                      onClick={handleSelectAllVideos}
-                      className="text-xs text-violet-300 hover:text-white transition-colors underline"
-                    >
-                      {Object.values(state.selectedVideos).filter(Boolean).length > 0 ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2 mb-6">
-                    {(state.sceneOrder && state.sceneOrder.length > 0
-                      ? state.sceneOrder
-                      : Array.from({ length: currentSceneCount }, (_, i) => `v${i + 1}`)
-                    ).map((key: string, idx: number) => {
-                      const hasVideo = !!state.images[key]?.videoUrl;
-                      const isSelected = !!state.selectedVideos[key];
-                      const isLoading = !!state.images[key]?.videoLoading;
-
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => hasVideo && handleToggleVideoSelect(key)}
-                          disabled={!hasVideo}
-                          className={`relative p-3 rounded-xl text-center transition-all text-xs font-bold
-                            ${!hasVideo ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed' : ''}
-                            ${hasVideo && !isSelected ? 'bg-slate-700 text-slate-300 hover:bg-slate-600 cursor-pointer' : ''}
-                            ${hasVideo && isSelected ? 'bg-violet-600 text-white ring-2 ring-violet-400 shadow-lg scale-105' : ''}
-                          `}
-                        >
-                          {isLoading ? (
-                            <span className="animate-pulse">⏳</span>
-                          ) : hasVideo ? (
-                            isSelected ? '✅' : '🎥'
-                          ) : (
-                            '—'
-                          )}
-                          <div className="mt-1">C{idx + 1}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-4 items-center">
-                    <button
-                      onClick={handleMergeVideos}
-                      disabled={selectedVideoCount < 2 || state.isMergingVideos}
-                      className={`w-full sm:w-auto px-10 py-4 font-black rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed
-                        ${selectedVideoCount >= 2 && !state.isMergingVideos
-                          ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:scale-105 active:scale-95'
-                          : 'bg-slate-600 text-slate-300'
-                        }`}
-                    >
-                      {state.isMergingVideos ? (
-                        <>
-                          <span className="animate-spin">⏳</span>
-                          Đang nối video...
-                        </>
-                      ) : (
-                        <>
-                          🔗 Nối {selectedVideoCount} Video
-                        </>
-                      )}
-                    </button>
-
-                    {selectedVideoCount > 0 && selectedVideoCount < 2 && (
-                      <p className="text-amber-400 text-xs font-bold">
-                        ⚠️ Cần chọn ít nhất 2 video để nối
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Merged Video Result */}
-                {state.mergedVideoUrl && (
-                  <div className="bg-gradient-to-r from-emerald-900/50 to-teal-900/50 border border-emerald-500/30 p-6 rounded-2xl">
-                    <h4 className="text-emerald-300 font-black uppercase tracking-widest text-sm mb-4 flex items-center gap-2">
-                      ✅ Video đã nối xong
-                    </h4>
-                    <div className="flex flex-col sm:flex-row gap-4 items-center">
-                      <video
-                        src={state.mergedVideoUrl}
-                        controls
-                        className="w-full sm:w-96 rounded-xl shadow-2xl border border-emerald-500/30"
-                      />
-                      <div className="flex flex-col gap-3">
-                        <a
-                          href={state.mergedVideoUrl}
-                          download={`koc_${state.productName || 'merged'}_video.mp4`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-8 py-4 bg-emerald-600 text-white font-black rounded-2xl shadow-xl hover:bg-emerald-500 transition-all text-sm flex items-center gap-3 uppercase tracking-widest"
-                        >
-                          ⬇️ Tải Video
-                        </a>
-                        <button
-                          onClick={() => setState((p: any) => ({ ...p, mergedVideoUrl: null }))}
-                          className="px-8 py-3 bg-slate-700 text-slate-300 font-bold rounded-xl hover:bg-slate-600 transition-all text-xs uppercase tracking-widest"
-                        >
-                          Đóng
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>
