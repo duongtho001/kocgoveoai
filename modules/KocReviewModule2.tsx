@@ -1478,10 +1478,10 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                           const audio = new Audio(`/audio-demo/${selectedVoice.file}`);
                           audio.play().catch(e => console.error('Audio play failed:', e));
                         }}
-                        className="px-3 py-2 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-xs font-black flex items-center gap-1 whitespace-nowrap"
+                        className="w-10 h-10 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-sm font-black flex items-center justify-center flex-shrink-0"
                         title={`Nghe thử giọng ${selectedVoice.value}`}
                       >
-                        🔊 Nghe thử
+                        🔊
                       </button>
                     ) : null;
                   })()}
