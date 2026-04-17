@@ -93,55 +93,18 @@ export const generateScenarioImage = async (
   gender: string = 'Nữ',
   language: string = 'vi'
 ): Promise<string> => {
-  // If no Gemini key, use Flow API T2I directly
-  if (!hasGeminiImage() && flowApi.isFlowApiAvailable()) {
-    const { persona, context } = getPersonaContext(language);
-    const subjectDescription = faceImagePart
-      ? `Character based on reference. Gender: ${gender}. ${persona}.`
-      : `Subject: A young ${persona} ${gender}. ${characterDescription}`;
-    const flowPrompt = `Photorealistic 9:16. ${subjectDescription}. ${context}. Action matches: "${scriptPart}". Product: ${productName} visible. Cinematic, 8k, clean. NO TEXT. ${userCustomPrompt || ""}`;
-    console.log(`[GeminiService] Using Flow API T2I for image generation`);
-    const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
-    if (result.imageUrls && result.imageUrls.length > 0) {
-      return result.imageUrls[0];
-    }
-    throw new Error('Flow API T2I returned no images');
-  }
-
-  const ai = getAiClient('image');
-  const modelId = "gemini-3.1-flash-image-preview";
+  // Flow API T2I only — 9:16
   const { persona, context } = getPersonaContext(language);
-  
-  const subjectDescription = faceImagePart 
-    ? `Character based on the face provided. Gender: ${gender}. ${persona}.`
+  const subjectDescription = faceImagePart
+    ? `Character based on reference. Gender: ${gender}. ${persona}.`
     : `Subject: A young ${persona} ${gender}. ${characterDescription}`;
-
-  const prompt = `Photorealistic 9:16. ${subjectDescription}. ${context}. Action matches: "${scriptPart}". Product: ${productName} visible. Cinematic, 8k, clean. NO TEXT. ${userCustomPrompt || ""}`;
-
-  const parts: any[] = [{ text: prompt }];
-  if (faceImagePart) parts.push({ inlineData: faceImagePart });
-  if (referenceImageParts.length > 0) parts.push({ inlineData: referenceImageParts[0] });
-
-  try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: { parts },
-      config: { imageConfig: { aspectRatio: "9:16" } }
-    });
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    throw new Error("Fail");
-  } catch (error) {
-    // Fallback to Flow API
-    if (flowApi.isFlowApiAvailable()) {
-      console.warn('[GeminiService] Gemini image gen failed, falling back to Flow API T2I');
-      const flowPrompt = `Photorealistic 9:16. ${subjectDescription}. ${prompt}`;
-      const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
-      if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
-    }
-    throw error;
+  const flowPrompt = `Photorealistic 9:16 vertical. ${subjectDescription}. ${context}. Action matches: "${scriptPart}". Product: ${productName} visible. Cinematic, 8k, clean. NO TEXT. ${userCustomPrompt || ""}`;
+  console.log(`[ImageGen] Flow API T2I 9:16`);
+  const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
+  if (result.imageUrls && result.imageUrls.length > 0) {
+    return result.imageUrls[0];
   }
+  throw new Error('Flow API T2I: không tạo được ảnh');
 };
 
 export const generateVeoPrompt = async (
@@ -270,63 +233,13 @@ export const generateCarouselImage = async (
   regenerateNote: string,
   language: string = 'vi'
 ): Promise<string> => {
-  // If no Gemini key, use Flow API T2I
-  if (!hasGeminiImage() && flowApi.isFlowApiAvailable()) {
-    const { persona, context } = getPersonaContext(language);
-    const targetLangLabel = getLanguageLabel(language);
-    const flowPrompt = `Photorealistic TikTok Carousel Slide 3:4 ratio. ${persona} character holding product. ${characterNote}. Expression matching: "${textContent}". High-end lifestyle, cinematic, 8k. ${extraNote} ${regenerateNote || ''}`;
-    console.log(`[GeminiService] Using Flow API T2I for carousel image`);
-    const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '3:4' });
-    if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
-    throw new Error('Flow API T2I returned no images');
-  }
-
-  const ai = getAiClient('image');
-  const modelId = "gemini-3.1-flash-image-preview";
+  // Flow API T2I only — 9:16
   const { persona, context } = getPersonaContext(language);
-  const targetLangLabel = getLanguageLabel(language);
-  
-  const prompt = `
-    TASK: Generate a Photorealistic TikTok Carousel Slide (3:4 ratio, 1200x1600).
-    SUBJECT: A ${persona} character holding the product in their hands. 
-    Character details: ${characterNote}.
-    Expression: Emotionally matching the content: "${textContent}".
-    Vibe: High-end lifestyle photography, cinematic lighting, 8k sharp.
-
-    MANDATORY TEXT OVERLAY SPECIFICATIONS:
-    - Text to overlay: "${textContent}"
-    - Font Style: Montserrat Bold, large, thick, and highly readable.
-    - LANGUAGE: ${targetLangLabel.toUpperCase()} (100% ACCURATE SPELLING AND DIACRITICS).
-    - Text Placement: Place text in Top-Center, Bottom-Center, or Corners.
-    - RULE: THE TEXT MUST NOT OVERLAP THE CHARACTER'S FACE OR THE PRODUCT.
-    - Spelling check: Double-check that "${textContent}" is written EXACTLY with correct marks for ${targetLangLabel}.
-
-    Context: ${context}. ${extraNote}
-    ${regenerateNote ? `User feedback for improvement: ${regenerateNote}` : ""}
-  `;
-
-  const parts: any[] = [{ text: prompt }];
-  if (faceImage) parts.push({ inlineData: faceImage });
-  productImages.forEach(p => parts.push({ inlineData: p }));
-
-  try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: { parts },
-      config: { imageConfig: { aspectRatio: "3:4" } }
-    });
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    throw new Error("No image generated.");
-  } catch (error) {
-    if (flowApi.isFlowApiAvailable()) {
-      console.warn('[GeminiService] Gemini carousel failed, falling back to Flow API T2I');
-      const result = await flowApi.textToImage([prompt], { aspect_ratio: '3:4' });
-      if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
-    }
-    throw error;
-  }
+  const flowPrompt = `Photorealistic 9:16 vertical TikTok Carousel Slide. ${persona} character holding product. ${characterNote}. Expression matching: "${textContent}". High-end lifestyle, cinematic, 8k. ${extraNote} ${regenerateNote || ''}`;
+  console.log(`[ImageGen] Flow API T2I 9:16 carousel`);
+  const result = await flowApi.textToImage([flowPrompt], { aspect_ratio: '9:16' });
+  if (result.imageUrls && result.imageUrls.length > 0) return result.imageUrls[0];
+  throw new Error('Flow API T2I: không tạo được ảnh carousel');
 };
 
 export const analyzeVideoContent = async (videoFile: File): Promise<string> => { return ""; };
