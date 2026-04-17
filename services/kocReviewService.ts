@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { ScriptParts, ScriptPartKey } from "../types";
 import { getAiClient, callWithRetry, callWithAiFallback } from "./keyService";
 import { getScriptLengthInstruction, getPersonaContext, getLanguageLabel } from "../utils/languageUtils";
+import * as flowApi from "./flowApiService";
 
 /**
  * Làm sạch phản hồi JSON từ mô hình AI bằng cách loại bỏ các thẻ markdown.
@@ -26,29 +27,8 @@ export const fileToGenerativePart = async (file: File) => {
  * Xử lý ảnh trang phục: Xóa nhân vật và bối cảnh, trả về ảnh trang phục trên nền trắng.
  */
 export const extractOutfitImage = async (outfitPart: any): Promise<string> => {
-  const ai = getAiClient('image');
-  const prompt = `
-    Tạo một hình ảnh chụp ảnh sản phẩm chuyên nghiệp CHỈ bao gồm trang phục được hiển thị trong ảnh tham chiếu.
-    1. XÓA hoàn toàn người/nhân vật.
-    2. XÓA hoàn toàn bối cảnh.
-    3. Trang phục phải được hiển thị một mình trên nền trắng tinh khiết (#FFFFFF).
-    4. Giữ nguyên chính xác hoa văn, màu sắc và kết cấu của quần áo 100%.
-    5. Sắp xếp quần áo tự nhiên như thể trên một ma-nơ-canh tàng hình hoặc đặt trên mặt phẳng sạch sẽ.
-    6. Đảm bảo kết quả là một hình ảnh sắc nét, chất lượng cao chỉ chứa quần áo.
-  `;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-image-preview",
-      contents: { parts: [{ text: prompt }, { inlineData: outfitPart }] }
-    });
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    throw new Error("Thất bại");
-  } catch (error) { 
-    console.error("Lỗi trích xuất ảnh trang phục:", error);
-    throw error; 
-  }
+  if (outfitPart?.data) return `data:image/png;base64,${outfitPart.data}`;
+  throw new Error('Outfit extraction requires Gemini API key');
 };
 
 const FORBIDDEN_TERMS = `
@@ -385,48 +365,19 @@ export const generateKocImage = async (
   backgroundReferencePart: any | null = null,
   language: string = 'vi'
 ): Promise<string> => {
-  const ai = getAiClient('image');
-  
+  // Flow API T2I only — 9:16
   const prompt = constructKocImagePrompt(
-    productName,
-    scriptPart,
-    characterDescription,
-    userCustomPrompt,
-    gender,
-    imageStyle,
-    backgroundNote,
-    visualNote,
-    poseLabel,
-    cameraAngle,
-    !!faceImagePart,
-    !!outfitImagePart,
-    !!backgroundReferencePart,
-    language
+    productName, scriptPart, characterDescription, userCustomPrompt,
+    gender, imageStyle, backgroundNote, visualNote, poseLabel, cameraAngle,
+    !!faceImagePart, !!outfitImagePart, !!backgroundReferencePart, language
   );
   
-  const contents: any[] = [{ text: prompt }];
-  if (faceImagePart) contents.push({ inlineData: faceImagePart });
-  if (outfitImagePart) contents.push({ inlineData: outfitImagePart });
-  if (backgroundReferencePart) contents.push({ inlineData: backgroundReferencePart });
-  
-  const noProductKeywords = ["không có sản phẩm", "xóa sản phẩm", "không xuất hiện sản phẩm", "bỏ sản phẩm", "không thấy sản phẩm", "no product", "remove product", "without product"];
-  const isNoProductRequested = userCustomPrompt && noProductKeywords.some(kw => userCustomPrompt.toLowerCase().includes(kw));
-
-  if (!isNoProductRequested) {
-    referenceImageParts.forEach(part => contents.push({ inlineData: part }));
+  console.log(`[KocService1] Flow API T2I 9:16`);
+  const result = await flowApi.textToImage([prompt], { aspect_ratio: '9:16' });
+  if (result.imageUrls && result.imageUrls.length > 0) {
+    return result.imageUrls[0];
   }
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
-      contents: { parts: contents },
-      config: { imageConfig: { aspectRatio: "9:16" } }
-    });
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
-    }
-    throw new Error("Thất bại");
-  } catch (error) { throw error; }
+  throw new Error('Flow API T2I: không tạo được ảnh');
 };
 
 /**
