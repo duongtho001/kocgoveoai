@@ -1270,7 +1270,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     setState((p: any) => ({ ...p, isFullWorkflowRunning: true, fullWorkflowStep: 'Đang tạo kịch bản...', fullWorkflowProgress: 5 }));
 
     try {
-      // === Step 1: Generate Script ===
       const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
       const initialImages: any = {};
       const initialPrompts: any = {};
@@ -1283,6 +1282,9 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
 
       setState((p: any) => ({ ...p, script: null, images: initialImages, imagePrompts: initialImagePrompts, videoPrompts: initialPrompts }));
 
+      // ══════════════════════════════════════════════════════
+      // STEP 1: Tạo Kịch Bản (Script)
+      // ══════════════════════════════════════════════════════
       let imageParts = [];
       if (state.productFiles.length > 0) {
         imageParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
@@ -1304,52 +1306,121 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         imageParts, state.productName, state.keyword, state.scriptTone, state.productSize, state.scriptNote,
         layoutToUse, state.gender, state.voice, state.addressing, state.sceneCount, state.targetAudience, language
       );
-      setState((p: any) => ({ ...p, script, scriptLayout: layoutToUse, fullWorkflowStep: 'Đang vẽ ảnh AI...', fullWorkflowProgress: 25 }));
+      setState((p: any) => ({ ...p, script, scriptLayout: layoutToUse, fullWorkflowStep: 'Đang tạo Prompt Ảnh...', fullWorkflowProgress: 15 }));
+      console.log('[FullPipeline] ✅ Step 1: Script done');
 
-      // === Step 2: Generate All Images ===
-      const { imageConcurrency } = getConcurrencySettings();
-      // We need to wait for script to be set, use direct state
-      const tempState = { ...state, script };
-      
-      const genImage = async (key: string) => {
-        setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: true } } }));
+      // ══════════════════════════════════════════════════════
+      // STEP 2: Tạo tất cả Prompt Ảnh (Gemini AI)
+      // ══════════════════════════════════════════════════════
+      const getPart = async (url: string | null) => {
+        if (!url) return null;
+        if (url.startsWith('data:')) return { mimeType: 'image/png', data: url.split(',')[1] };
         try {
-          let productParts = [];
-          if (state.productFiles.length > 0) {
-            productParts = await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)));
-          } else {
-            productParts = state.productPreviewUrls.map((url: string) => ({ mimeType: 'image/png', data: url.split(',')[1] }));
-          }
-          const getPart = async (file: File | null, url: string | null) => {
-            if (file) return await service.fileToGenerativePart(file);
-            if (url?.startsWith('data:')) return { mimeType: 'image/png', data: url.split(',')[1] };
-            return null;
-          };
-          const facePart = await getPart(state.faceFile, state.facePreviewUrl);
-          const outfitPart = state.processedOutfitUrl
-            ? { mimeType: 'image/png', data: state.processedOutfitUrl.split(',')[1] }
-            : await getPart(state.outfitFile, state.outfitPreviewUrl);
-          const bgRefPart = await getPart(state.backgroundFile, state.backgroundPreviewUrl);
-          const url = await service.generateKocImage(
-            productParts, facePart, outfitPart, '', state.productName, script[key],
-            state.characterDescription, '', state.gender, state.imageStyle, state.scriptNote,
-            state.visualNote, '', bgRefPart, '', language
-          );
-          setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url, loading: false } } }));
-          return url;
-        } catch (e) {
-          setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Failed' } } }));
-          return '';
-        }
+          const res = await fetch(url);
+          const blob = await res.blob();
+          return new Promise<any>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve({ mimeType: blob.type, data: (reader.result as string).split(',')[1] });
+            reader.readAsDataURL(blob);
+          });
+        } catch { return null; }
       };
 
-      await runBatch(
-        activeKeys.map(key => ({ key, fn: () => genImage(key) })),
-        imageConcurrency
-      );
-      setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang tạo Video Prompt...', fullWorkflowProgress: 55 }));
+      const facePart = await getPart(state.facePreviewUrl);
+      const outfitPart = await getPart(state.processedOutfitUrl || state.outfitPreviewUrl);
+      const bgPart = await getPart(state.backgroundPreviewUrl);
 
-      // === Step 3: Generate All Video Prompts ===
+      // Collect reference data URLs once
+      const refDataUrls: string[] = [];
+      const productParts = state.productFiles.length > 0
+        ? await Promise.all(state.productFiles.map((file: File) => service.fileToGenerativePart(file)))
+        : (state.productPreviewUrls || []).map((url: string) => ({ mimeType: 'image/png', data: url.split(',')[1] }));
+      for (const part of productParts) {
+        if (part?.data) refDataUrls.push(`data:${part.mimeType || 'image/png'};base64,${part.data}`);
+      }
+      const imageFormat = state.images?.v1?.format || '';
+      if (imageFormat !== 'no_character' && imageFormat !== 'hands_only' && imageFormat !== 'legs_only') {
+        if (facePart?.data) refDataUrls.push(`data:${facePart.mimeType || 'image/png'};base64,${facePart.data}`);
+      }
+      if (imageFormat !== 'no_character' && outfitPart?.data) {
+        refDataUrls.push(`data:${outfitPart.mimeType || 'image/png'};base64,${outfitPart.data}`);
+      }
+      if (bgPart?.data) refDataUrls.push(`data:${bgPart.mimeType || 'image/png'};base64,${bgPart.data}`);
+
+      // Generate image prompts using constructKocImagePrompt (synchronous, fast)
+      const batchItems: { key: string; prompt: string }[] = [];
+      for (const key of activeKeys) {
+        const poseLabel = KOC_POSES.find(p => p.value === state.images[key]?.pose)?.label || '';
+        const keyFormat = state.images[key]?.format || '';
+        
+        const prompt = service.constructKocImagePrompt(
+          state.productName,
+          script[key],
+          state.characterDescription,
+          state.images[key]?.customPrompt,
+          state.gender,
+          state.imageStyle,
+          state.scriptNote,
+          state.visualNote,
+          poseLabel,
+          keyFormat,
+          !!facePart,
+          !!outfitPart,
+          !!bgPart,
+          language
+        );
+        batchItems.push({ key, prompt });
+
+        // Save prompt to state for display
+        setState((p: any) => ({
+          ...p,
+          imagePrompts: {
+            ...p.imagePrompts,
+            [key]: { text: prompt, loading: false, visible: true }
+          }
+        }));
+      }
+
+      setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang vẽ ảnh AI (batch)...', fullWorkflowProgress: 30 }));
+      console.log(`[FullPipeline] ✅ Step 2: ${batchItems.length} Image Prompts done`);
+
+      // ══════════════════════════════════════════════════════
+      // STEP 3: Tạo tất cả Ảnh (Flow API Batch R2I/T2I)
+      // ══════════════════════════════════════════════════════
+      const { imageConcurrency } = getConcurrencySettings();
+      
+      // Mark all as loading
+      setState((prev: any) => {
+        const newImages = { ...prev.images };
+        activeKeys.forEach(k => { newImages[k] = { ...newImages[k], loading: true }; });
+        return { ...prev, images: newImages };
+      });
+
+      const imageResults = await service.generateKocImageBatch(
+        batchItems,
+        refDataUrls,
+        imageConcurrency,
+        state.imageQuality || 'normal'
+      );
+
+      // Update images state
+      setState((prev: any) => {
+        const newImages = { ...prev.images };
+        for (const result of imageResults) {
+          newImages[result.key] = { ...newImages[result.key], url: result.url || '', loading: false };
+        }
+        activeKeys.forEach(k => {
+          if (newImages[k]?.loading) newImages[k] = { ...newImages[k], loading: false };
+        });
+        return { ...prev, images: newImages };
+      });
+
+      setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang tạo Video Prompt...', fullWorkflowProgress: 55 }));
+      console.log(`[FullPipeline] ✅ Step 3: ${imageResults.filter(r => r.url).length}/${batchItems.length} Images done`);
+
+      // ══════════════════════════════════════════════════════
+      // STEP 4: Tạo tất cả Video Prompt (Gemini AI)
+      // ══════════════════════════════════════════════════════
       const { videoPromptConcurrency } = getConcurrencySettings();
       const genVideoPrompt = async (key: string) => {
         setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
@@ -1361,7 +1432,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
           } else if (state.productPreviewUrls.length > 0) {
             productImageData = state.productPreviewUrls[0].split(',')[1];
           }
-          // Read the latest image URL from current state snapshot
+          // Read the latest image URL from current state
           const latestState = await new Promise<any>(resolve => {
             setState((prev: any) => { resolve(prev); return prev; });
           });
@@ -1385,8 +1456,11 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         videoPromptConcurrency
       );
       setState((p: any) => ({ ...p, fullWorkflowStep: 'Đang tạo Video AI...', fullWorkflowProgress: 75 }));
+      console.log('[FullPipeline] ✅ Step 4: Video Prompts done');
 
-      // === Step 4: Generate All Videos (via Flow API) ===
+      // ══════════════════════════════════════════════════════
+      // STEP 5: Tạo tất cả Video (Flow API)
+      // ══════════════════════════════════════════════════════
       if (flowApi.isFlowApiAvailable()) {
         const { videoConcurrency } = getConcurrencySettings();
         const genVideo = async (key: string) => {
@@ -1425,6 +1499,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       }
 
       setState((p: any) => ({ ...p, fullWorkflowStep: 'Hoàn thành! ✅', fullWorkflowProgress: 100 }));
+      console.log('[FullPipeline] ✅ All steps complete!');
       setTimeout(() => {
         setState((p: any) => ({ ...p, isFullWorkflowRunning: false, fullWorkflowStep: '', fullWorkflowProgress: 0 }));
       }, 3000);
