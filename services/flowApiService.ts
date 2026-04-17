@@ -4,7 +4,7 @@
  * Docs: https://sneer-enviable-evaluate.ngrok-free.dev/docs/integration
  */
 
-const FLOW_API_URL = ((import.meta as any).env?.VITE_FLOW_API_URL || '').trim();
+const FLOW_API_URL = ((import.meta as any).env?.VITE_FLOW_API_URL || '').trim().replace(/\/+$/, '');
 const FLOW_API_KEY = ((import.meta as any).env?.VITE_FLOW_API_KEY || '').trim();
 
 // ============================================================
@@ -165,8 +165,15 @@ export const waitForJob = async (
 
 /**
  * Lấy URL download ảnh từ job
+ * On production: fetches via proxy and returns blob URL
+ * On localhost: returns direct API URL
  */
 export const getImageUrl = (jobId: string, index: number = 0): string => {
+  if (isProduction()) {
+    // On production, we can't use direct URLs — return a placeholder,
+    // caller should use fetchImageBlob instead
+    return `__proxy__image__${jobId}__${index}`;
+  }
   const API = getApiUrl();
   return `${API}/api/jobs/${jobId}/image?index=${index}`;
 };
@@ -175,8 +182,43 @@ export const getImageUrl = (jobId: string, index: number = 0): string => {
  * Lấy URL download video từ job
  */
 export const getVideoUrl = (jobId: string): string => {
+  if (isProduction()) {
+    return `__proxy__video__${jobId}`;
+  }
   const API = getApiUrl();
   return `${API}/api/jobs/${jobId}/video`;
+};
+
+/**
+ * Fetch binary content (image/video) via proxy and return blob URL
+ */
+export const fetchBlobUrl = async (jobId: string, type: 'image' | 'video', index: number = 0): Promise<string> => {
+  const path = type === 'image' ? `/api/jobs/${jobId}/image?index=${index}` : `/api/jobs/${jobId}/video`;
+  
+  if (isProduction()) {
+    const resp = await fetch('/api/flow-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'GET', path }),
+    });
+    if (!resp.ok) throw new Error(`Fetch ${type} failed: ${resp.status}`);
+    const data = await resp.json();
+    if (data.data && data.mimeType) {
+      // Convert base64 to blob URL
+      const binary = atob(data.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: data.mimeType });
+      return URL.createObjectURL(blob);
+    }
+    throw new Error(`Invalid proxy response for ${type}`);
+  } else {
+    const API = getApiUrl();
+    const resp = await fetch(`${API}${path}`);
+    if (!resp.ok) throw new Error(`Fetch ${type} failed: ${resp.status}`);
+    const blob = await resp.blob();
+    return URL.createObjectURL(blob);
+  }
 };
 
 // ============================================================
@@ -208,7 +250,11 @@ export const textToImage = async (
   const { job_id } = await resp.json();
 
   const job = await waitForJob(job_id, onProgress);
-  const imageUrls = job.images.map((_, i) => getImageUrl(job_id, i));
+  
+  // On production, fetch blob URLs via proxy; on localhost, use direct URLs
+  const imageUrls = isProduction()
+    ? await Promise.all(job.images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
+    : job.images.map((_, i) => getImageUrl(job_id, i));
 
   return { jobId: job_id, imageUrls };
 };
@@ -242,7 +288,10 @@ export const referenceToImage = async (
   const { job_id } = await resp.json();
 
   const job = await waitForJob(job_id, onProgress);
-  const imageUrls = job.images.map((_, i) => getImageUrl(job_id, i));
+  
+  const imageUrls = isProduction()
+    ? await Promise.all(job.images.map((_, i) => fetchBlobUrl(job_id, 'image', i)))
+    : job.images.map((_, i) => getImageUrl(job_id, i));
 
   return { jobId: job_id, imageUrls };
 };
@@ -274,7 +323,8 @@ export const textToVideo = async (
   const { job_id } = await resp.json();
 
   const job = await waitForJob(job_id, onProgress);
-  return { jobId: job_id, videoUrl: getVideoUrl(job_id) };
+  const videoUrl = isProduction() ? await fetchBlobUrl(job_id, 'video') : getVideoUrl(job_id);
+  return { jobId: job_id, videoUrl };
 };
 
 // ============================================================
@@ -304,7 +354,8 @@ export const imageToVideo = async (
   const { job_id } = await resp.json();
 
   const job = await waitForJob(job_id, onProgress);
-  return { jobId: job_id, videoUrl: getVideoUrl(job_id) };
+  const videoUrl = isProduction() ? await fetchBlobUrl(job_id, 'video') : getVideoUrl(job_id);
+  return { jobId: job_id, videoUrl };
 };
 
 // ============================================================
@@ -332,7 +383,8 @@ export const multiRefVideo = async (
   const { job_id } = await resp.json();
 
   const job = await waitForJob(job_id, onProgress);
-  return { jobId: job_id, videoUrl: getVideoUrl(job_id) };
+  const videoUrl = isProduction() ? await fetchBlobUrl(job_id, 'video') : getVideoUrl(job_id);
+  return { jobId: job_id, videoUrl };
 };
 
 // ============================================================
@@ -432,17 +484,8 @@ export const promptToVideo = async (
  * Upload video lên Flow API server để lấy path cho merge
  */
 export const uploadVideo = async (file: File): Promise<string> => {
-  const API = getApiUrl();
-  const fd = new FormData();
-  fd.append('file', file);
-  const resp = await fetch(`${API}/api/upload-image`, {
-    method: 'POST',
-    headers: getHeaders(false),
-    body: fd
-  });
-  if (!resp.ok) throw new Error(`Upload video failed: ${resp.status}`);
-  const data = await resp.json();
-  return data.path;
+  // Reuse uploadImage — same endpoint, works with proxy on production
+  return uploadImage(file);
 };
 
 /**
@@ -455,19 +498,16 @@ export const mergeVideos = async (
   outputName: string = 'merged_video',
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
-  const API = getApiUrl();
-
   if (videoPaths.length < 2) {
     throw new Error('Cần ít nhất 2 video để nối');
   }
 
-  const resp = await fetch(`${API}/api/merge-videos`, {
+  const resp = await flowFetch('/api/merge-videos', {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({
+    body: {
       video_paths: videoPaths,
       output_name: outputName,
-    }),
+    },
   });
 
   if (!resp.ok) throw new Error(`Merge failed: ${resp.status}`);
@@ -476,10 +516,12 @@ export const mergeVideos = async (
   // If it returns a job_id, wait for it
   if (data.job_id) {
     const job = await waitForJob(data.job_id, onProgress);
-    return { jobId: data.job_id, videoUrl: getVideoUrl(data.job_id) };
+    const videoUrl = isProduction() ? await fetchBlobUrl(data.job_id, 'video') : getVideoUrl(data.job_id);
+    return { jobId: data.job_id, videoUrl };
   }
 
   // If it returns directly (synchronous merge)
+  const API = getApiUrl();
   return {
     jobId: data.job_id || 'direct',
     videoUrl: data.output_path ? `${API}/api/storage/video?path=${encodeURIComponent(data.output_path)}` : data.url || ''
