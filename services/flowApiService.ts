@@ -306,17 +306,21 @@ export const textToVideo = async (
     aspect_ratio?: string;
     model_tier?: string;
     video_length_seconds?: number;
+    voice?: string;
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
+  const body: any = {
+    prompts,
+    aspect_ratio: options.aspect_ratio || '9:16',
+    model_tier: options.model_tier || 'VEO_FLOW',
+    video_length_seconds: options.video_length_seconds || 8,
+  };
+  if (options.voice) body.voice = options.voice;
+
   const resp = await flowFetch('/api/text-to-video', {
     method: 'POST',
-    body: {
-      prompts,
-      aspect_ratio: options.aspect_ratio || '9:16',
-      model_tier: options.model_tier || 'VEO_FLOW',
-      video_length_seconds: options.video_length_seconds || 8,
-    },
+    body,
   });
 
   if (!resp.ok) throw new Error(`T2V failed: ${resp.status}`);
@@ -337,17 +341,21 @@ export const imageToVideo = async (
     aspect_ratio?: string;
     model_tier?: string;
     video_length_seconds?: number;
+    voice?: string;
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
+  const body: any = {
+    items,
+    aspect_ratio: options.aspect_ratio || '9:16',
+    model_tier: options.model_tier || 'VEO_FLOW',
+    video_length_seconds: options.video_length_seconds || 8,
+  };
+  if (options.voice) body.voice = options.voice;
+
   const resp = await flowFetch('/api/image-to-video', {
     method: 'POST',
-    body: {
-      items,
-      aspect_ratio: options.aspect_ratio || '9:16',
-      model_tier: options.model_tier || 'VEO_FLOW',
-      video_length_seconds: options.video_length_seconds || 8,
-    },
+    body,
   });
 
   if (!resp.ok) throw new Error(`I2V failed: ${resp.status}`);
@@ -431,12 +439,13 @@ export const base64ImageToVideo = async (
   dataUrl: string,
   prompt: string,
   aspectRatio: string = '9:16',
-  onProgress?: FlowProgressCallback
+  onProgress?: FlowProgressCallback,
+  voice?: string
 ): Promise<string> => {
   const path = await uploadBase64Image(dataUrl);
   const result = await imageToVideo(
     [{ image_path: path, prompt }],
-    { aspect_ratio: aspectRatio },
+    { aspect_ratio: aspectRatio, voice },
     onProgress
   );
   return result.videoUrl;

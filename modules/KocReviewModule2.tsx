@@ -45,6 +45,22 @@ const ADDRESSING_OPTIONS = [
   "mình - mọi người"
 ];
 
+// Flow API VEO voice options (for video narration)
+const FLOW_VOICE_OPTIONS: { value: string; label: string; gender: string }[] = [
+  { value: '', label: '-- Không có giọng --', gender: '' },
+  { value: 'achernar', label: '🎙 Achernar (Nữ trẻ)', gender: 'Nữ' },
+  { value: 'charon', label: '🎙 Charon (Nam trầm)', gender: 'Nam' },
+  { value: 'eridanus', label: '🎙 Eridanus (Nam)', gender: 'Nam' },
+  { value: 'fenrir', label: '🎙 Fenrir (Nam khỏe)', gender: 'Nam' },
+  { value: 'leda', label: '🎙 Leda (Nữ nhẹ)', gender: 'Nữ' },
+  { value: 'orus', label: '🎙 Orus (Nam)', gender: 'Nam' },
+  { value: 'pegasi', label: '🎙 Pegasi (Nữ)', gender: 'Nữ' },
+  { value: 'puck', label: '🎙 Puck (Nam trẻ)', gender: 'Nam' },
+  { value: 'schedar', label: '🎙 Schedar (Nữ)', gender: 'Nữ' },
+  { value: 'sulafat', label: '🎙 Sulafat (Nam)', gender: 'Nam' },
+  { value: 'vega', label: '🎙 Vega (Nữ ấm)', gender: 'Nữ' },
+];
+
 interface KocReviewModule2Props {
   language?: string;
 }
@@ -67,6 +83,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     targetAudience: '',
     imageStyle: 'Realistic',
     imageQuality: 'normal' as 'normal' | '4K',
+    videoVoice: '' as string,
     sceneCount: 5,
     productFiles: [], 
     productPreviewUrls: [],
@@ -824,17 +841,19 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     }));
     try {
       let videoUrl: string;
-      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http'))) {
+      const voiceOpt = state.videoVoice || undefined;
+      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http') || imageUrl.startsWith('blob:'))) {
         videoUrl = await flowApi.base64ImageToVideo(
           imageUrl,
           state.videoPrompts[key].text,
           '9:16',
-          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`)
+          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`),
+          voiceOpt
         );
       } else {
         const result = await flowApi.textToVideo(
           [state.videoPrompts[key].text],
-          { aspect_ratio: '9:16' },
+          { aspect_ratio: '9:16', voice: voiceOpt },
           (job) => console.log(`[Flow T2V ${key}] ${job.progress}%`)
         );
         videoUrl = result.videoUrl;
@@ -1233,6 +1252,35 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                   </button>
                 </div>
               </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">🎙 Giọng video (VEO Voice)</label>
+                <div className="flex gap-2">
+                  <select
+                    value={state.videoVoice}
+                    onChange={e => setState(p => ({ ...p, videoVoice: e.target.value }))}
+                    className={`flex-1 p-2.5 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none text-sm font-bold`}
+                  >
+                    {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                  </select>
+                  {state.videoVoice && (
+                    <button
+                      onClick={() => {
+                        // Audio preview using browser TTS
+                        const sampleText = state.script?.v1 || 'Xin chào, đây là giọng nói mẫu để bạn nghe thử.';
+                        const utterance = new SpeechSynthesisUtterance(sampleText.substring(0, 150));
+                        utterance.lang = 'vi-VN';
+                        utterance.rate = 0.9;
+                        window.speechSynthesis.cancel();
+                        window.speechSynthesis.speak(utterance);
+                      }}
+                      className="px-3 py-2 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-xs font-black flex items-center gap-1 whitespace-nowrap"
+                      title="Nghe thử giọng mẫu (browser TTS)"
+                    >
+                      🔊 Nghe thử
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -1474,7 +1522,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                   className="w-full md:w-auto px-8 py-5 text-white font-black rounded-2xl shadow-xl transition-all active:scale-[0.98] flex items-center justify-center gap-3 uppercase tracking-widest text-sm"
                   style={{ backgroundColor: 'var(--primary-color)' }}
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1.01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   Tải Video Prompt (.txt)
                 </button>
               </div>
