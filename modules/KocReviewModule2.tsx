@@ -6,6 +6,7 @@ import { runBatch, getConcurrencySettings, saveConcurrencySettings, ConcurrencyS
 import * as flowApi from '../services/flowApiService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
+import VideoGallery from '../components/VideoGallery';
 import { HOOK_LAYOUTS } from '../components/45hook';
 import { copyToClipboard } from '../utils/clipboard';
 import { theme } from '../constants/colors';
@@ -1735,6 +1736,24 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                 🎥 Tạo tất cả Video
               </button>
             </div>
+
+            {/* ═══ Video Gallery ═══ */}
+            {(() => {
+              const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+              const galleryVideos = activeKeys
+                .filter(k => state.images?.[k]?.videoUrl)
+                .map((k, idx) => ({
+                  key: k,
+                  label: `Cảnh ${parseInt(k.replace('v', ''))}`,
+                  videoUrl: state.images[k].videoUrl!,
+                  thumbnailUrl: state.images[k].url || undefined,
+                  scriptText: state.script?.[k] || undefined,
+                  videoPrompt: state.videoPrompts?.[k]?.text || undefined,
+                }));
+              return galleryVideos.length > 0 ? (
+                <VideoGallery videos={galleryVideos} />
+              ) : null;
+            })()}
 
             {hasGeneratedItems && (
               <div className="flex flex-col md:flex-row items-center justify-center gap-4 border-t border-slate-200 w-full pt-12">
