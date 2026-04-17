@@ -410,6 +410,11 @@ const App: React.FC = () => {
             )}
           </form>
           <div className="mt-10 text-center"><p className={`text-[10px] font-bold ${theme.colors.textMuted} uppercase tracking-widest leading-relaxed`}>Công cụ tối thiểu - Hiệu suất tối đa</p></div>
+          <div className="mt-4 text-center p-3 bg-blue-50 rounded-xl border border-blue-100">
+            <p className="text-[11px] font-bold text-blue-700 leading-relaxed">
+              📱 Liên hệ Zalo <a href="https://zalo.me/0934415387" target="_blank" rel="noopener noreferrer" className="font-black text-blue-800 underline hover:text-blue-600 transition-colors">Đường Thọ - 0934415387</a> để tạo tài khoản
+            </p>
+          </div>
         </div>
       </div>
     );
