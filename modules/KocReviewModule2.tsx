@@ -84,7 +84,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {}
-    return [{ id: 'default', name: 'SP 1', keyword: '', scriptTone: '', productSize: '', scriptNote: '', productPreviewUrls: [], status: 'draft' }];
+    return [{ id: 'default', name: 'SP 1', keyword: '', scriptTone: '', productSize: '', scriptNote: '', imageUrl: '', productPreviewUrls: [], status: 'draft' }];
   };
   
   const [products, setProducts] = useState<ProductTab[]>(initProducts);
@@ -319,6 +319,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       scriptTone: partial.scriptTone || '',
       productSize: partial.productSize || '',
       scriptNote: partial.scriptNote || '',
+      imageUrl: partial.imageUrl || '',
       productPreviewUrls: partial.productPreviewUrls || [],
       status: 'draft',
     };
@@ -328,14 +329,72 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
   };
 
   const handleRemoveProduct = (id: string) => {
-    if (products.length <= 1) return;
+    if (products.length <= 1) {
+      alert('Cần ít nhất 1 sản phẩm!');
+      return;
+    }
     if (!confirm('Xóa sản phẩm này?')) return;
-    setProducts(prev => prev.filter(p => p.id !== id));
-    try { localStorage.removeItem(getStorageKeyForProduct(id)); } catch {}
+    
+    // If deleting the active product, switch to another one first
     if (id === activeProductId) {
       const remaining = products.filter(p => p.id !== id);
-      if (remaining.length > 0) handleSwitchProduct(remaining[0].id);
+      if (remaining.length > 0) {
+        // Save current state then switch
+        const { isGeneratingScript, isExtractingOutfit, isRegeneratingPart, productFiles, faceFile, outfitFile, backgroundFile, ...persistentData } = state;
+        safeSaveToLocalStorage(getStorageKeyForProduct(id), persistentData);
+        setActiveProductId(remaining[0].id);
+        
+        // Load new product state
+        try {
+          const saved = localStorage.getItem(getStorageKeyForProduct(remaining[0].id));
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && typeof parsed === 'object') {
+              const safeSceneCount = typeof parsed.sceneCount === 'object' ? (parsed.sceneCount.count || 5) : (parsed.sceneCount || 5);
+              setState((prev: any) => ({
+                ...prev,
+                ...parsed,
+                sceneCount: safeSceneCount,
+                productFiles: [],
+                faceFile: prev.faceFile,
+                facePreviewUrl: prev.facePreviewUrl,
+                outfitFile: prev.outfitFile,
+                outfitPreviewUrl: prev.outfitPreviewUrl,
+                characterDescription: prev.characterDescription,
+                gender: prev.gender,
+                voice: prev.voice,
+                addressing: prev.addressing,
+                flowVoice: prev.flowVoice,
+                imageStyle: prev.imageStyle,
+                imageQuality: prev.imageQuality,
+                isGeneratingScript: false,
+                isFullWorkflowRunning: false,
+                isRegeneratingPart: {},
+              }));
+            }
+          } else {
+            // New blank product
+            setState((prev: any) => ({
+              ...prev,
+              productName: remaining[0].name || '',
+              keyword: remaining[0].keyword || '',
+              productFiles: [],
+              productPreviewUrls: [],
+              script: null,
+              images: {},
+              imagePrompts: {},
+              videoPrompts: {},
+              isGeneratingScript: false,
+              isFullWorkflowRunning: false,
+            }));
+          }
+        } catch {}
+      }
     }
+    
+    // Remove from list
+    setProducts(prev => prev.filter(p => p.id !== id));
+    try { localStorage.removeItem(getStorageKeyForProduct(id)); } catch {}
   };
 
   const handleImportCSV = (imported: Partial<ProductTab>[]) => {
@@ -346,6 +405,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       scriptTone: p.scriptTone || '',
       productSize: p.productSize || '',
       scriptNote: p.scriptNote || '',
+      imageUrl: p.imageUrl || '',
       productPreviewUrls: [],
       status: 'draft' as const,
     }));

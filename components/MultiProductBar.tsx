@@ -7,6 +7,7 @@ export interface ProductTab {
   scriptTone: string;
   productSize: string;
   scriptNote: string;
+  imageUrl: string; // URL ảnh sản phẩm từ CSV
   productPreviewUrls: string[];
   status: 'draft' | 'scripted' | 'images' | 'videos' | 'done';
 }
@@ -58,10 +59,10 @@ const MultiProductBar: React.FC<MultiProductBarProps> = ({
 
   // Download CSV template
   const downloadTemplate = () => {
-    const header = 'Tên sản phẩm,Từ khóa,Tone giọng,Kích thước/Dung tích,Ghi chú kịch bản';
-    const example1 = 'Kem chống nắng UV Shield,SPF50 chống nắng da dầu,Hài hước dí dỏm,50ml,Da nhạy cảm dùng được';
-    const example2 = 'Son môi Cherry Velvet,Son lì đỏ cherry bền màu,Tự tin sành điệu,3.5g,Không chì không paraben';
-    const example3 = 'Serum HA Plus,Serum cấp ẩm hyaluronic,Chuyên gia phân tích,30ml,Dùng sáng tối';
+    const header = 'Tên sản phẩm,Từ khóa,Tone giọng,Kích thước/Dung tích,Ghi chú kịch bản,Ảnh sản phẩm (URL)';
+    const example1 = 'Kem chống nắng UV Shield,SPF50 chống nắng da dầu,Hài hước dí dỏm,50ml,Da nhạy cảm dùng được,https://example.com/kem-chong-nang.jpg';
+    const example2 = 'Son môi Cherry Velvet,Son lì đỏ cherry bền màu,Tự tin sành điệu,3.5g,Không chì không paraben,https://example.com/son-moi.jpg';
+    const example3 = 'Serum HA Plus,Serum cấp ẩm hyaluronic,Chuyên gia phân tích,30ml,Dùng sáng tối,https://example.com/serum.jpg';
     const csv = [header, example1, example2, example3].join('\n');
     
     const BOM = '\uFEFF'; // UTF-8 BOM for Excel compatibility
@@ -95,12 +96,14 @@ const MultiProductBar: React.FC<MultiProductBarProps> = ({
         // Simple CSV parse (handle quoted values)
         const cols = parseCSVLine(lines[i]);
         if (cols.length >= 1 && cols[0].trim()) {
+          const imageUrl = cols[5]?.trim() || '';
           products.push({
             name: cols[0]?.trim() || `Sản phẩm ${i}`,
             keyword: cols[1]?.trim() || '',
             scriptTone: cols[2]?.trim() || '',
             productSize: cols[3]?.trim() || '',
             scriptNote: cols[4]?.trim() || '',
+            imageUrl: imageUrl,
             status: 'draft',
           });
         }
