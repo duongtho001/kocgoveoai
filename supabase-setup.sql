@@ -14,9 +14,21 @@ CREATE TABLE IF NOT EXISTS users (
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
   credits INTEGER DEFAULT 100,
   max_daily_generations INTEGER DEFAULT 50,
+  image_quota INTEGER DEFAULT 50,
+  video_quota INTEGER DEFAULT 20,
+  images_used INTEGER DEFAULT 0,
+  videos_used INTEGER DEFAULT 0,
+  quota_reset_date TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration: Add quota columns if table already exists
+ALTER TABLE users ADD COLUMN IF NOT EXISTS image_quota INTEGER DEFAULT 50;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS video_quota INTEGER DEFAULT 20;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS images_used INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS videos_used INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quota_reset_date TIMESTAMPTZ DEFAULT NOW();
 
 -- 2. App settings table (admin configurable)
 CREATE TABLE IF NOT EXISTS app_settings (

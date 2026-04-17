@@ -3,6 +3,8 @@ import { ScriptPartKey, ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import * as service from '../services/kocReviewService2';
 import * as flowApi from '../services/flowApiService';
+import * as quotaService from '../services/quotaService';
+import type { UserQuota } from '../services/quotaService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { HOOK_LAYOUTS } from '../components/45hook';
@@ -63,6 +65,9 @@ const FLOW_VOICE_OPTIONS: { value: string; label: string; file: string }[] = [
 
 interface KocReviewModule2Props {
   language?: string;
+  loggedInUser?: string | null;
+  userQuota?: UserQuota | null;
+  onQuotaChange?: (quota: UserQuota | null) => void;
 }
 
 /**
@@ -79,7 +84,7 @@ const runWithConcurrency = async <T,>(
   }
 };
 
-const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) => {
+const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', loggedInUser, userQuota, onQuotaChange }) => {
   const storageKey = "koc_project_v23_clone_instance";
   const [state, setState] = useState<any>({
     faceFile: null,
@@ -763,6 +768,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
         state.imageQuality
       );
       setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url, loading: false } } }));
+      // Track quota
+      if (loggedInUser) {
+        await quotaService.incrementImageUsage(loggedInUser);
+        const q = await quotaService.getUserQuota(loggedInUser);
+        onQuotaChange?.(q);
+      }
     } catch (e) {
       console.error(e);
       setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Failed' } } }));
@@ -795,6 +806,11 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
   };
 
   const handleBulkImage = async () => {
+    // Check quota
+    if (userQuota && userQuota.imagesRemaining <= 0) {
+      alert('Đã hết quota ảnh. Liên hệ Admin để nâng gói.');
+      return;
+    }
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
     await runWithConcurrency(keys, handleGenImageForKey, state.batchConcurrency);
   };
@@ -877,6 +893,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
         ...prev,
         images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
       }));
+      // Track quota
+      if (loggedInUser) {
+        await quotaService.incrementVideoUsage(loggedInUser);
+        const q = await quotaService.getUserQuota(loggedInUser);
+        onQuotaChange?.(q);
+      }
     } catch (e) {
       console.error(`Flow video for ${key} failed`, e);
       setState((prev: any) => ({
@@ -888,6 +910,11 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
 
   // Bulk: Tạo tất cả video (luôn I2V từ ảnh)
   const handleBulkVideo = async () => {
+    // Check quota
+    if (userQuota && userQuota.videosRemaining <= 0) {
+      alert('Đã hết quota video. Liên hệ Admin để nâng gói.');
+      return;
+    }
     const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`)
       .filter(key => state.videoPrompts[key]?.text && state.images[key]?.url);
     await runWithConcurrency(keys, handleFlowVideoForKey, state.batchConcurrency);

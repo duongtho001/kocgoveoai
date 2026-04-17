@@ -1,5 +1,7 @@
 
 import { supabase } from './lib/supabase';
+import * as quotaService from './services/quotaService';
+import type { UserQuota } from './services/quotaService';
 import React, { useState, useEffect, useRef } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
 import KocReviewModule from './modules/KocReviewModule';
@@ -40,6 +42,7 @@ const App: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [currentTab, setCurrentTab] = useState<ModuleTab>('chatbot');
+  const [userQuota, setUserQuota] = useState<UserQuota | null>(null);
 
   const [themeConfig, setThemeConfig] = useState(() => {
     const saved = localStorage.getItem('koc_goveoai_theme');
@@ -269,6 +272,10 @@ const App: React.FC = () => {
       sessionStorage.setItem('koc_goveoai_auth', 'true');
       sessionStorage.setItem('koc_goveoai_user', username.trim());
       sessionStorage.setItem('koc_goveoai_api_key', userData.api_key || '');
+
+      // Load quota
+      const quota = await quotaService.getUserQuota(username.trim());
+      setUserQuota(quota);
     } catch (error: any) {
       console.error('Login error:', error);
       setLoginError('Có lỗi xảy ra khi đăng nhập: ' + (error.message || 'Vui lòng thử lại sau.'));
@@ -313,7 +320,7 @@ const App: React.FC = () => {
     switch(currentTab) {
       case 'intro': return <FeatureIntroModule />;
       case 'koc': return <KocReviewModule language={currentLanguage} />;
-      case 'koc2': return <KocReviewModule2 language={currentLanguage} />;
+      case 'koc2': return <KocReviewModule2 language={currentLanguage} loggedInUser={loggedInUser} userQuota={userQuota} onQuotaChange={setUserQuota} />;
       case 'shopee8s': return <Shopee8sModule language={currentLanguage} />;
       case 'videopov': return <VideoPovModule language={currentLanguage} />;
       case 'carousel': return <CarouselModule language={currentLanguage} />;
@@ -572,6 +579,15 @@ const App: React.FC = () => {
                   </svg>
                   <span className="font-black text-xs uppercase tracking-wider hidden md:inline">Đăng xuất</span>
                 </button>
+
+                {/* Quota Badge */}
+                {userQuota && userQuota.image_quota < 999999 && (
+                  <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-full border border-slate-200 text-[10px] font-black text-slate-600">
+                    <span title="Ảnh còn lại">📷 {userQuota.imagesRemaining}/{userQuota.image_quota}</span>
+                    <span className="text-slate-300">|</span>
+                    <span title="Video còn lại">🎥 {userQuota.videosRemaining}/{userQuota.video_quota}</span>
+                  </div>
+                )}
               </div>
           </div>
         </nav>
