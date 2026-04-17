@@ -10,6 +10,7 @@ import { analyzeDetailedBackground } from '../services/kocReviewService2';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { theme } from '../constants/colors';
+import * as flowApi from '../services/flowApiService';
 
 declare var JSZip: any;
 
@@ -798,6 +799,140 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
     }
   };
 
+  // ============================================================
+  // Flow API Integration: Tạo ảnh + video qua Flow API
+  // ============================================================
+
+  const handleFlowImageForKey = async (key: string) => {
+    if (!state.imagePrompts[key]?.text) {
+      alert(`Cảnh ${key}: Chưa có Image Prompt. Hãy tạo prompt ảnh trước.`);
+      return;
+    }
+    setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: true } } }));
+    try {
+      const imageUrl = await flowApi.generateFlowImage(
+        state.imagePrompts[key].text,
+        '9:16',
+        (job) => console.log(`[Flow T2I ${key}] ${job.progress}%`)
+      );
+      setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], url: imageUrl, loading: false } } }));
+    } catch (e) {
+      console.error(`Flow image for ${key} failed`, e);
+      setState((prev: any) => ({ ...prev, images: { ...prev.images, [key]: { ...prev.images[key], loading: false, error: 'Flow API failed' } } }));
+    }
+  };
+
+  const handleFlowVideoForKey = async (key: string) => {
+    if (!state.videoPrompts[key]?.text) {
+      alert(`Cảnh ${key}: Chưa có Video Prompt.`);
+      return;
+    }
+    const imageUrl = state.images[key]?.url;
+    setState((prev: any) => ({
+      ...prev,
+      images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
+    }));
+    try {
+      let videoUrl: string;
+      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http'))) {
+        // I2V: Có ảnh → upload ảnh → tạo video từ ảnh
+        videoUrl = await flowApi.base64ImageToVideo(
+          imageUrl,
+          state.videoPrompts[key].text,
+          '9:16',
+          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`)
+        );
+      } else {
+        // T2V: Không có ảnh → tạo video từ prompt
+        const result = await flowApi.textToVideo(
+          [state.videoPrompts[key].text],
+          { aspect_ratio: '9:16' },
+          (job) => console.log(`[Flow T2V ${key}] ${job.progress}%`)
+        );
+        videoUrl = result.videoUrl;
+      }
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+      }));
+    } catch (e) {
+      console.error(`Flow video for ${key} failed`, e);
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+      }));
+    }
+  };
+
+  const handleBulkFlowImage = async () => {
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+    for (const key of keys) {
+      if (state.imagePrompts[key]?.text) {
+        await handleFlowImageForKey(key);
+      }
+    }
+  };
+
+  const handleBulkFlowVideo = async () => {
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+    for (const key of keys) {
+      if (state.videoPrompts[key]?.text) {
+        await handleFlowVideoForKey(key);
+      }
+    }
+  };
+
+  /**
+   * DỰ ÁN TỰ ĐỘNG (Full Pipeline)
+   * Tự động: Tạo Image Prompt → Tạo Ảnh (Flow API) → Tạo Video Prompt → Tạo Video (Flow API)
+   */
+  const handleAutoProject = async () => {
+    if (!state.script) {
+      alert('Vui lòng tạo kịch bản trước khi chạy Dự Án Tự Động.');
+      return;
+    }
+
+    if (!flowApi.isFlowApiAvailable()) {
+      alert('Flow API chưa được cấu hình. Kiểm tra VITE_FLOW_API_URL trong .env.');
+      return;
+    }
+
+    const keys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+
+    // Step 1: Tạo Image Prompt cho tất cả cảnh
+    console.log('🎬 [Auto] Step 1/4: Tạo Image Prompts...');
+    for (const key of keys) {
+      if (!state.imagePrompts[key]?.text) {
+        await handleGenerateImagePromptForKey(key);
+      }
+    }
+
+    // Step 2: Tạo Ảnh từ Image Prompt (Flow API T2I)
+    console.log('🖼️ [Auto] Step 2/4: Tạo Ảnh qua Flow API...');
+    for (const key of keys) {
+      if (!state.images[key]?.url) {
+        await handleFlowImageForKey(key);
+      }
+    }
+
+    // Step 3: Tạo Video Prompt cho tất cả cảnh
+    console.log('📝 [Auto] Step 3/4: Tạo Video Prompts...');
+    for (const key of keys) {
+      if (!state.videoPrompts[key]?.text) {
+        await handleGeneratePromptForKey(key);
+      }
+    }
+
+    // Step 4: Tạo Video từ Ảnh + Video Prompt (Flow API I2V)
+    console.log('🎥 [Auto] Step 4/4: Tạo Video qua Flow API...');
+    for (const key of keys) {
+      await handleFlowVideoForKey(key);
+    }
+
+    console.log('✅ [Auto] Hoàn tất Dự Án Tự Động!');
+    alert('✅ Dự Án Tự Động hoàn tất! Tất cả ảnh và video đã được tạo.');
+  };
+
   const handleGeneratePromptForKey = async (key: string) => {
     setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
     try {
@@ -1276,6 +1411,29 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
               >
                 Tạo tất cả Prompt video
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14H11V21L20 10H13Z" /></svg>
+              </button>
+            </div>
+
+            {/* Flow API Automation */}
+            <div className="flex flex-col md:flex-row gap-4 w-full justify-center px-4">
+              <button
+                onClick={handleAutoProject}
+                className="w-full md:w-auto px-10 py-5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-black rounded-2xl shadow-2xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ring-2 ring-violet-300/50"
+              >
+                🚀 DỰ ÁN TỰ ĐỘNG
+                <span className="text-[10px] font-bold opacity-80 normal-case">(Prompt→Ảnh→Video)</span>
+              </button>
+              <button
+                onClick={handleBulkFlowImage}
+                className="w-full md:w-auto px-8 py-4 bg-emerald-600 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
+              >
+                🖼️ Tạo Ảnh Flow API
+              </button>
+              <button
+                onClick={handleBulkFlowVideo}
+                className="w-full md:w-auto px-8 py-4 bg-orange-600 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest"
+              >
+                🎥 Tạo Video Flow API
               </button>
             </div>
 
