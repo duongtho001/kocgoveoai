@@ -45,20 +45,20 @@ const ADDRESSING_OPTIONS = [
   "mình - mọi người"
 ];
 
-// Flow API VEO voice options (for video narration)
-const FLOW_VOICE_OPTIONS: { value: string; label: string; gender: string }[] = [
-  { value: '', label: '-- Không có giọng --', gender: '' },
-  { value: 'achernar', label: '🎙 Achernar (Nữ trẻ)', gender: 'Nữ' },
-  { value: 'charon', label: '🎙 Charon (Nam trầm)', gender: 'Nam' },
-  { value: 'eridanus', label: '🎙 Eridanus (Nam)', gender: 'Nam' },
-  { value: 'fenrir', label: '🎙 Fenrir (Nam khỏe)', gender: 'Nam' },
-  { value: 'leda', label: '🎙 Leda (Nữ nhẹ)', gender: 'Nữ' },
-  { value: 'orus', label: '🎙 Orus (Nam)', gender: 'Nam' },
-  { value: 'pegasi', label: '🎙 Pegasi (Nữ)', gender: 'Nữ' },
-  { value: 'puck', label: '🎙 Puck (Nam trẻ)', gender: 'Nam' },
-  { value: 'schedar', label: '🎙 Schedar (Nữ)', gender: 'Nữ' },
-  { value: 'sulafat', label: '🎙 Sulafat (Nam)', gender: 'Nam' },
-  { value: 'vega', label: '🎙 Vega (Nữ ấm)', gender: 'Nữ' },
+// Flow API VEO voice options (for video narration) — matches actual demo files
+const FLOW_VOICE_OPTIONS: { value: string; label: string; file: string }[] = [
+  { value: '', label: '-- Không có giọng --', file: '' },
+  { value: 'Achernar', label: '🎙 Achernar', file: 'Achernar.wav' },
+  { value: 'Achird', label: '🎙 Achird', file: 'Achird.wav' },
+  { value: 'Algenib', label: '🎙 Algenib', file: 'Algenib.wav' },
+  { value: 'Algieba', label: '🎙 Algieba', file: 'Algieba.wav' },
+  { value: 'Alnilam', label: '🎙 Alnilam', file: 'Alnilam.wav' },
+  { value: 'Aoede', label: '🎙 Aoede', file: 'Aoede.wav' },
+  { value: 'Autonoe', label: '🎙 Autonoe', file: 'Autonoe.wav' },
+  { value: 'Callirrhoe', label: '🎙 Callirrhoe', file: 'Callirrhoe.wav' },
+  { value: 'Charon', label: '🎙 Charon', file: 'Charon.wav' },
+  { value: 'Despina', label: '🎙 Despina', file: 'Despina.wav' },
+  { value: 'Enceladus', label: '🎙 Enceladus', file: 'Enceladus.wav' },
 ];
 
 interface KocReviewModule2Props {
@@ -1262,23 +1262,21 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                   >
                     {FLOW_VOICE_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
                   </select>
-                  {state.videoVoice && (
-                    <button
-                      onClick={() => {
-                        // Audio preview using browser TTS
-                        const sampleText = state.script?.v1 || 'Xin chào, đây là giọng nói mẫu để bạn nghe thử.';
-                        const utterance = new SpeechSynthesisUtterance(sampleText.substring(0, 150));
-                        utterance.lang = 'vi-VN';
-                        utterance.rate = 0.9;
-                        window.speechSynthesis.cancel();
-                        window.speechSynthesis.speak(utterance);
-                      }}
-                      className="px-3 py-2 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-xs font-black flex items-center gap-1 whitespace-nowrap"
-                      title="Nghe thử giọng mẫu (browser TTS)"
-                    >
-                      🔊 Nghe thử
-                    </button>
-                  )}
+                  {state.videoVoice && (() => {
+                    const selectedVoice = FLOW_VOICE_OPTIONS.find(v => v.value === state.videoVoice);
+                    return selectedVoice?.file ? (
+                      <button
+                        onClick={() => {
+                          const audio = new Audio(`/audio-demo/${selectedVoice.file}`);
+                          audio.play().catch(e => console.error('Audio play failed:', e));
+                        }}
+                        className="px-3 py-2 bg-violet-100 text-violet-700 rounded-xl hover:bg-violet-200 transition-all text-xs font-black flex items-center gap-1 whitespace-nowrap"
+                        title={`Nghe thử giọng ${selectedVoice.value}`}
+                      >
+                        🔊 Nghe thử
+                      </button>
+                    ) : null;
+                  })()}
                 </div>
               </div>
             </div>
