@@ -302,6 +302,7 @@ export const textToImage = async (
     model_name?: string;
     num_images?: number;
     upscale_quality?: string;
+    max_concurrency?: number;
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; imageUrls: string[] }> => {
@@ -312,6 +313,7 @@ export const textToImage = async (
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
       num_images: options.num_images || 1,
+      max_concurrency: options.max_concurrency || 2,
       ...(options.upscale_quality ? { upscale_quality: options.upscale_quality } : {}),
     },
   });
@@ -340,6 +342,7 @@ export const referenceToImage = async (
     aspect_ratio?: string;
     model_name?: string;
     upscale_quality?: string;
+    max_concurrency?: number;
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; imageUrls: string[] }> => {
@@ -350,6 +353,7 @@ export const referenceToImage = async (
       reference_images: referenceImages,
       aspect_ratio: options.aspect_ratio || '9:16',
       model_name: options.model_name,
+      max_concurrency: options.max_concurrency || 2,
       ...(options.upscale_quality ? { upscale_quality: options.upscale_quality } : {}),
     },
   });
@@ -385,6 +389,7 @@ export const textToVideo = async (
     aspect_ratio: options.aspect_ratio || '9:16',
     model_tier: options.model_tier || 'VEO_FLOW',
     video_length_seconds: options.video_length_seconds || 8,
+    max_concurrency: options.max_concurrency || 2,
   };
   if (options.voice) body.voice = options.voice;
 
@@ -420,6 +425,7 @@ export const imageToVideo = async (
     aspect_ratio: options.aspect_ratio || '9:16',
     model_tier: options.model_tier || 'VEO_FLOW',
     video_length_seconds: options.video_length_seconds || 8,
+    max_concurrency: options.max_concurrency || 2,
   };
   if (options.voice) body.voice = options.voice;
 
@@ -455,6 +461,7 @@ export const multiRefVideo = async (
     aspect_ratio: options.aspect_ratio || '9:16',
     model_tier: options.model_tier || 'VEO_FLOW',
     video_length_seconds: options.video_length_seconds || 10,
+    max_concurrency: options.max_concurrency || 2,
   };
   if (options.voice) body.voice = options.voice;
 
@@ -717,4 +724,43 @@ export const generateImage = async (prompt: string, aspectRatio: string = '9:16'
     return result.imageUrls[0];
   }
   throw new Error('Flow API T2I: không tạo được ảnh');
+};
+
+// ============================================================
+// Server Concurrency Management
+// ============================================================
+
+export interface FlowServerConcurrency {
+  default_video_concurrency: number;
+  default_image_concurrency: number;
+  public_video_concurrency: number;
+  public_image_concurrency: number;
+  accounts: { profile: string; max_slots: number; running: number; available: boolean }[];
+}
+
+/**
+ * Get server-side concurrency settings from Flow API
+ */
+export const getFlowServerConcurrency = async (): Promise<FlowServerConcurrency> => {
+  const resp = await flowFetch('/admin/api/concurrency');
+  if (!resp.ok) throw new Error(`Failed to get concurrency: ${resp.status}`);
+  return resp.json();
+};
+
+/**
+ * Update server-side concurrency settings on Flow API
+ */
+export const updateFlowServerConcurrency = async (settings: {
+  default_video_concurrency?: number;
+  default_image_concurrency?: number;
+  public_video_concurrency?: number;
+  public_image_concurrency?: number;
+  account_slots?: { profile: string; max_slots: number }[];
+}): Promise<FlowServerConcurrency> => {
+  const resp = await flowFetch('/admin/api/concurrency', {
+    method: 'PUT',
+    body: settings,
+  });
+  if (!resp.ok) throw new Error(`Failed to update concurrency: ${resp.status}`);
+  return resp.json();
 };
