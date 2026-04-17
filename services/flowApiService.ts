@@ -445,16 +445,22 @@ export const multiRefVideo = async (
   options: {
     aspect_ratio?: string;
     model_tier?: string;
+    video_length_seconds?: number;
+    voice?: string;
   } = {},
   onProgress?: FlowProgressCallback
 ): Promise<{ jobId: string; videoUrl: string }> => {
+  const body: any = {
+    items,
+    aspect_ratio: options.aspect_ratio || '9:16',
+    model_tier: options.model_tier || 'VEO_FLOW',
+    video_length_seconds: options.video_length_seconds || 10,
+  };
+  if (options.voice) body.voice = options.voice;
+
   const resp = await flowFetch('/api/multi-ref-video', {
     method: 'POST',
-    body: {
-      items,
-      aspect_ratio: options.aspect_ratio || '9:16',
-      model_tier: options.model_tier || 'VEO_FLOW',
-    },
+    body,
   });
 
   if (!resp.ok) throw new Error(`R2V failed: ${resp.status}`);
@@ -553,6 +559,65 @@ export const promptToVideo = async (
     imageUrl: imgResult.imageUrls[0],
     videoUrl: vidResult.videoUrl
   };
+};
+
+// ============================================================
+// Smart Video Generator (auto-route ITV / RTV)
+// ============================================================
+
+/**
+ * Tạo video thông minh từ ảnh base64:
+ * - Có voice → R2V (Reference-to-Video với giọng nói)
+ * - Không voice → I2V (Image-to-Video thông thường)
+ *
+ * @param imageDataUrl - Base64 data URL của ảnh
+ * @param prompt - Video prompt
+ * @param options - aspect_ratio, model_tier, video_length_seconds, voice
+ * @param onProgress - Callback theo dõi tiến trình
+ * @returns videoUrl
+ */
+export const generateVideoFromImage = async (
+  imageDataUrl: string,
+  prompt: string,
+  options: {
+    aspect_ratio?: string;
+    model_tier?: string;
+    video_length_seconds?: number;
+    voice?: string;
+  } = {},
+  onProgress?: FlowProgressCallback
+): Promise<string> => {
+  // Upload ảnh lên server
+  const imagePath = await uploadBase64Image(imageDataUrl);
+
+  if (options.voice) {
+    // ── R2V: Reference-to-Video (hỗ trợ voice + ảnh tham chiếu) ──
+    console.log(`[generateVideo] R2V mode — voice: ${options.voice}`);
+    const result = await multiRefVideo(
+      [{ image_paths: [imagePath], prompt }],
+      {
+        aspect_ratio: options.aspect_ratio || '9:16',
+        model_tier: options.model_tier || 'VEO_FLOW',
+        video_length_seconds: options.video_length_seconds || 10,
+        voice: options.voice,
+      },
+      onProgress
+    );
+    return result.videoUrl;
+  } else {
+    // ── I2V: Image-to-Video (không voice) ──
+    console.log('[generateVideo] I2V mode — no voice');
+    const result = await imageToVideo(
+      [{ image_path: imagePath, prompt }],
+      {
+        aspect_ratio: options.aspect_ratio || '9:16',
+        model_tier: options.model_tier || 'VEO_FLOW',
+        video_length_seconds: options.video_length_seconds || 8,
+      },
+      onProgress
+    );
+    return result.videoUrl;
+  }
 };
 
 // ============================================================
