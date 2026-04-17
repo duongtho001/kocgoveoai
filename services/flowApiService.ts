@@ -86,23 +86,76 @@ const getHeaders = (json: boolean = true): Record<string, string> => {
 };
 
 /**
+ * Compress image to fit within Vercel's 4.5MB body limit
+ * Resizes to max 1920px and converts to JPEG at 85% quality
+ */
+const compressImageForUpload = async (dataUrl: string, maxSize: number = 1920): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      
+      // Only resize if larger than maxSize
+      if (width > maxSize || height > maxSize) {
+        const ratio = Math.min(maxSize / width, maxSize / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(dataUrl); return; }
+      
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Try JPEG first (much smaller), fallback to PNG
+      let compressed = canvas.toDataURL('image/jpeg', 0.85);
+      
+      // If still too large (>3MB base64 ≈ 2.25MB binary), reduce quality further
+      if (compressed.length > 3_000_000) {
+        compressed = canvas.toDataURL('image/jpeg', 0.65);
+      }
+      if (compressed.length > 3_000_000) {
+        compressed = canvas.toDataURL('image/jpeg', 0.45);
+      }
+      
+      console.log(`[compress] ${img.naturalWidth}x${img.naturalHeight} → ${width}x${height}, ${(compressed.length / 1024).toFixed(0)}KB`);
+      resolve(compressed);
+    };
+    img.onerror = () => resolve(dataUrl); // Fallback to original on error
+    img.src = dataUrl;
+  });
+};
+
+/**
+ * Convert File to dataUrl for compression
+ */
+const fileToDataUrl = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+/**
  * Upload ảnh lên Flow API server
  */
 export const uploadImage = async (file: File): Promise<string> => {
   if (isProduction()) {
-    // Convert file to base64 for proxy
-    const reader = new FileReader();
-    const dataUrl = await new Promise<string>((resolve) => {
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(file);
-    });
+    // Convert file to base64, compress, then send through proxy
+    const dataUrl = await fileToDataUrl(file);
+    const compressedDataUrl = await compressImageForUpload(dataUrl);
     const resp = await fetch('/api/flow-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         method: 'POST',
         path: '/api/upload-image',
-        body: { dataUrl, filename: file.name },
+        body: { dataUrl: compressedDataUrl, filename: file.name },
         isFormData: true
       }),
     });
@@ -128,10 +181,27 @@ export const uploadImage = async (file: File): Promise<string> => {
  * Upload ảnh từ base64 data URL
  */
 export const uploadBase64Image = async (dataUrl: string, filename: string = 'image.png'): Promise<string> => {
-  const resp = await fetch(dataUrl);
-  const blob = await resp.blob();
-  const file = new File([blob], filename, { type: blob.type || 'image/png' });
-  return uploadImage(file);
+  if (isProduction()) {
+    // Compress before sending through proxy (Vercel 4.5MB body limit)
+    const compressed = await compressImageForUpload(dataUrl);
+    const resp = await fetch('/api/flow-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'POST',
+        path: '/api/upload-image',
+        body: { dataUrl: compressed, filename },
+        isFormData: true
+      }),
+    });
+    if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return data.path;
+  } else {
+    const blob = await fetch(dataUrl).then(r => r.blob());
+    const file = new File([blob], filename, { type: blob.type || 'image/png' });
+    return uploadImage(file);
+  }
 };
 
 /**
