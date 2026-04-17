@@ -2027,31 +2027,13 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                       </div>
                     </div>
                   </div>
-                  {/* Flow Server concurrency - sync button */}
+                  {/* Flow Server concurrency - auto sync info */}
                   <div className="border-t border-slate-200 pt-3 mt-2">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 mb-1">
                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">🖥️ Flow API Server</p>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const result = await flowApi.updateFlowServerConcurrency({
-                              default_image_concurrency: concurrencySettings.imageConcurrency,
-                              default_video_concurrency: concurrencySettings.videoConcurrency,
-                              public_image_concurrency: concurrencySettings.imageConcurrency,
-                              public_video_concurrency: concurrencySettings.videoConcurrency,
-                            });
-                            alert(`✅ Đã đồng bộ Server!\nẢnh: ${result.default_image_concurrency} luồng\nVideo: ${result.default_video_concurrency} luồng`);
-                          } catch (e: any) {
-                            alert(`❌ Lỗi đồng bộ: ${e?.message || 'Không kết nối được server'}`);
-                          }
-                        }}
-                        className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-lg text-[9px] font-black uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center gap-1.5"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                        Đồng bộ Server
-                      </button>
+                      <span className="text-[8px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">✅ Auto Sync</span>
                     </div>
-                    <p className="text-[8px] text-slate-400 italic">Đồng bộ số luồng Ảnh/Video lên Flow API Server để chạy song song thực sự</p>
+                    <p className="text-[8px] text-slate-400 italic">Số luồng tự động đồng bộ lên Server khi bấm "Tạo kịch bản" hoặc "Full Pipeline"</p>
                   </div>
                 </div>
               )}
