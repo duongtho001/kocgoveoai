@@ -5,12 +5,16 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
 async function sendMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
   });
+  const data = await resp.json();
+  if (!data.ok) console.error('[Telegram] sendMessage failed:', data);
 }
 
 async function isAdmin(telegramId) {
@@ -29,6 +33,15 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    // Debug: check env vars
+    if (!BOT_TOKEN) {
+      console.error('[Telegram] TELEGRAM_BOT_TOKEN is not set!');
+      return res.status(500).json({ error: 'Bot token not configured' });
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[Telegram] SUPABASE_SERVICE_ROLE_KEY is not set!');
+    }
+
     const update = req.body;
     const message = update.message;
     if (!message?.text) return res.json({ ok: true });
@@ -50,6 +63,8 @@ export default async function handler(req, res) {
         `/adduser &lt;username&gt; &lt;password&gt;\n` +
         `/users — Danh sách users\n` +
         `/setcredits &lt;username&gt; &lt;amount&gt;\n` +
+        `/setquota &lt;username&gt; &lt;images&gt; &lt;videos&gt;\n` +
+        `/resetquota &lt;username&gt;\n` +
         `/ban &lt;username&gt; | /unban &lt;username&gt;\n` +
         `/deleteuser &lt;username&gt;\n` +
         `/setgemini &lt;key&gt;`
@@ -88,7 +103,7 @@ export default async function handler(req, res) {
     if (text === '/myinfo') {
       const { data: user } = await supabase.from('users').select('*').eq('telegram_id', telegramId).single();
       if (!user) { await sendMessage(chatId, '❌ Bạn chưa đăng ký.'); }
-      else { await sendMessage(chatId, `📋 <b>Thông tin tài khoản</b>\n\n👤 Username: <code>${user.username}</code>\n🔑 API Key: <code>${user.api_key}</code>\n💰 Credits: ${user.credits}\n📊 Status: ${user.status === 'active' ? '✅ Active' : '🚫 Suspended'}\n👑 Role: ${user.role}\n📅 Ngày tạo: ${new Date(user.created_at).toLocaleDateString('vi-VN')}`); }
+      else { await sendMessage(chatId, `📋 <b>Thông tin tài khoản</b>\n\n👤 Username: <code>${user.username}</code>\n🔑 API Key: <code>${user.api_key}</code>\n💰 Credits: ${user.credits}\n📷 Ảnh: ${user.images_used || 0}/${user.image_quota || 50}\n🎥 Video: ${user.videos_used || 0}/${user.video_quota || 20}\n📊 Status: ${user.status === 'active' ? '✅ Active' : '🚫 Suspended'}\n👑 Role: ${user.role}\n📅 Ngày tạo: ${new Date(user.created_at).toLocaleDateString('vi-VN')}`); }
       return res.json({ ok: true });
     }
 
@@ -150,6 +165,25 @@ export default async function handler(req, res) {
       if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
       await supabase.from('app_settings').upsert({ key: 'gemini_api_key', value: text.split(/\s+/)[1], description: 'Gemini API Key' });
       await sendMessage(chatId, `✅ Gemini API Key đã cập nhật.`);
+      return res.json({ ok: true });
+    }
+
+    if (text.startsWith('/setquota ')) {
+      if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
+      const parts = text.split(/\s+/);
+      if (parts.length < 4) { await sendMessage(chatId, '❌ /setquota &lt;username&gt; &lt;images&gt; &lt;videos&gt;'); return res.json({ ok: true }); }
+      const { error } = await supabase.from('users').update({ image_quota: parseInt(parts[2]), video_quota: parseInt(parts[3]) }).eq('username', parts[1]);
+      if (error) { await sendMessage(chatId, `❌ ${error.message}`); }
+      else { await sendMessage(chatId, `✅ Quota ${parts[1]}: 📷 ${parts[2]} ảnh, 🎥 ${parts[3]} video`); }
+      return res.json({ ok: true });
+    }
+
+    if (text.startsWith('/resetquota ')) {
+      if (!(await isAdmin(telegramId))) { await sendMessage(chatId, '🚫 Chỉ Admin.'); return res.json({ ok: true }); }
+      const username = text.split(/\s+/)[1];
+      const { error } = await supabase.from('users').update({ images_used: 0, videos_used: 0 }).eq('username', username);
+      if (error) { await sendMessage(chatId, `❌ ${error.message}`); }
+      else { await sendMessage(chatId, `✅ Đã reset quota cho ${username}`); }
       return res.json({ ok: true });
     }
 
