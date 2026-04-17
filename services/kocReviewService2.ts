@@ -608,19 +608,15 @@ export const generateKocImageBatch = async (
   
   // Step 3: Split items across profiles
   // 1 profile → 1 request (server handles internal concurrency via semaphore)
-  // 2+ profiles → split evenly so each profile gets its own job and Chrome session
+  // 2+ profiles → split evenly, each profile uses FULL maxConcurrency (setting = per profile)
   const chunks: { key: string; prompt: string }[][] = [];
-  let concurrencyPerChunk: number;
+  const concurrencyPerChunk = maxConcurrency; // Setting "Ảnh AI" = concurrency PER profile
   
   if (numProfiles <= 1) {
-    // 1 profile: send ALL in 1 request — server internally parallelizes via semaphore
     chunks.push([...items]);
-    concurrencyPerChunk = maxConcurrency;
     console.log(`[BatchImage] 1 profile → 1 request with ${items.length} prompts, concurrency=${maxConcurrency}`);
   } else {
-    // 2+ profiles: split evenly so each gets a separate job → different Chrome session
     const perProfile = Math.ceil(items.length / numProfiles);
-    concurrencyPerChunk = Math.max(1, Math.ceil(maxConcurrency / numProfiles));
     for (let i = 0; i < items.length; i += perProfile) {
       chunks.push(items.slice(i, i + perProfile));
     }
