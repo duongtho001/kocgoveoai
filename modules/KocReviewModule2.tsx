@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ScriptPartKey, ScriptParts } from '../types';
 import { safeSaveToLocalStorage } from '../utils/storage';
 import * as service from '../services/kocReviewService2';
+import * as flowApi from '../services/flowApiService';
 import ScriptSection from '../components/ScriptSection';
 import ImageCard, { KOC_POSES, CAMERA_ANGLES } from '../components/ImageCard';
 import { HOOK_LAYOUTS } from '../components/45hook';
@@ -808,6 +809,47 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
     }
   };
 
+  // Flow API: Tạo video cho từng cảnh
+  const handleFlowVideoForKey = async (key: string) => {
+    if (!state.videoPrompts[key]?.text) {
+      alert(`Cảnh ${key}: Chưa có Video Prompt.`);
+      return;
+    }
+    const imageUrl = state.images[key]?.url || '';
+    setState((prev: any) => ({
+      ...prev,
+      images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
+    }));
+    try {
+      let videoUrl: string;
+      if (imageUrl && (imageUrl.startsWith('data:') || imageUrl.startsWith('http'))) {
+        videoUrl = await flowApi.base64ImageToVideo(
+          imageUrl,
+          state.videoPrompts[key].text,
+          '9:16',
+          (job) => console.log(`[Flow I2V ${key}] ${job.progress}%`)
+        );
+      } else {
+        const result = await flowApi.textToVideo(
+          [state.videoPrompts[key].text],
+          { aspect_ratio: '9:16' },
+          (job) => console.log(`[Flow T2V ${key}] ${job.progress}%`)
+        );
+        videoUrl = result.videoUrl;
+      }
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+      }));
+    } catch (e) {
+      console.error(`Flow video for ${key} failed`, e);
+      setState((prev: any) => ({
+        ...prev,
+        images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+      }));
+    }
+  };
+
   const downloadAllImages = async () => {
     if (typeof JSZip === 'undefined') {
       alert("Đang tải thư viện nén, vui lòng thử lại sau giây lát.");
@@ -1223,6 +1265,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi' }) 
                   onGeneratePrompt={() => handleGeneratePromptForKey(key)}
                   onGenerateImagePrompt={() => handleGenerateImagePromptForKey(key)}
                   onRegenerate={() => handleGenImageForKey(key)}
+                  onGenerateVideo={() => handleFlowVideoForKey(key)}
                   onTranslate={() => { }}
                   onUpload={(file) => handleUploadImageForKey(key, file)}
                   onDelete={() => handleDeleteImageForKey(key)}
