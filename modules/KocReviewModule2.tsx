@@ -1237,7 +1237,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
     }));
     try {
-      const videoUrl = await flowApi.generateVideoFromImage(
+      const result = await flowApi.generateVideoFromImage(
         state.images[key].url,
         state.videoPrompts[key].text,
         { aspect_ratio: '9:16', voice: state.flowVoice || undefined },
@@ -1245,7 +1245,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       );
       setState((prev: any) => ({
         ...prev,
-        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+        images: { ...prev.images, [key]: { ...prev.images[key], videoUrl: result.videoUrl, videoJobId: result.jobId, videoLoading: false } }
       }));
     } catch (e) {
       console.error(`Video gen failed for ${key}:`, e);
@@ -1274,25 +1274,34 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
   // ═══════════ Merge All Videos ═══════════
   const handleMergeAllVideos = async () => {
     const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    const videoKeys = activeKeys.filter(k => state.images?.[k]?.videoUrl);
+    const videoKeys = activeKeys.filter(k => state.images?.[k]?.videoUrl && state.images?.[k]?.videoJobId);
     
     if (videoKeys.length < 2) {
       alert('Cần ít nhất 2 video để nối. Hãy tạo video trước.');
       return;
     }
 
-    setState((p: any) => ({ ...p, isMergingVideos: true, mergeStep: 'Đang chuẩn bị video...' }));
+    setState((p: any) => ({ ...p, isMergingVideos: true, mergeStep: 'Đang lấy đường dẫn video...' }));
 
     try {
-      // Convert all video URLs to server paths
+      // Get video paths from server using job_ids (no re-upload needed)
       const videoPaths: string[] = [];
       for (let i = 0; i < videoKeys.length; i++) {
         const key = videoKeys[i];
-        const videoUrl = state.images[key].videoUrl;
-        setState((p: any) => ({ ...p, mergeStep: `Đang upload video ${i + 1}/${videoKeys.length}...` }));
+        const jobId = state.images[key].videoJobId;
+        setState((p: any) => ({ ...p, mergeStep: `Đang lấy path video ${i + 1}/${videoKeys.length}...` }));
         
-        const path = await flowApi.videoUrlToPath(videoUrl);
-        videoPaths.push(path);
+        // Query server for the video file path using job_id
+        const path = await flowApi.getVideoPathFromJob(jobId);
+        if (path) {
+          videoPaths.push(path);
+        } else {
+          console.warn(`[MergeVideos] No video path for job ${jobId}`);
+        }
+      }
+
+      if (videoPaths.length < 2) {
+        throw new Error(`Chỉ tìm thấy ${videoPaths.length} video trên server. Cần ít nhất 2.`);
       }
 
       setState((p: any) => ({ ...p, mergeStep: 'Đang nối video...' }));
@@ -1613,13 +1622,13 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             }));
             
             try {
-              const videoUrl = await flowApi.generateVideoFromImage(
+              const videoResult = await flowApi.generateVideoFromImage(
                 imgUrl, vPrompt,
                 { aspect_ratio: '9:16', voice: state.flowVoice || undefined }
               );
               setState((prev: any) => ({
                 ...prev,
-                images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+                images: { ...prev.images, [key]: { ...prev.images[key], videoUrl: videoResult.videoUrl, videoJobId: videoResult.jobId, videoLoading: false } }
               }));
               console.log(`[FullPipeline] Step 5: ✅ ${key} done (${idx + 1}/${videoKeys.length})`);
             } catch (e) {

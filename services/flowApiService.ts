@@ -662,7 +662,7 @@ export const generateVideoFromImage = async (
     voice?: string;
   } = {},
   onProgress?: FlowProgressCallback
-): Promise<string> => {
+): Promise<{ videoUrl: string; jobId: string }> => {
   // Upload ảnh lên server
   const imagePath = await uploadBase64Image(imageDataUrl);
 
@@ -680,7 +680,7 @@ export const generateVideoFromImage = async (
         },
         onProgress
       );
-      return result.videoUrl;
+      return { videoUrl: result.videoUrl, jobId: result.jobId };
     } catch (r2vErr: any) {
       // R2V+voice failed (Google 500) → fallback to I2V without voice
       console.warn(`[generateVideo] R2V+voice failed: ${r2vErr.message}. Falling back to I2V (no voice)...`);
@@ -693,7 +693,7 @@ export const generateVideoFromImage = async (
         },
         onProgress
       );
-      return fallback.videoUrl;
+      return { videoUrl: fallback.videoUrl, jobId: fallback.jobId };
     }
   } else {
     // ── I2V: Image-to-Video (không voice) ──
@@ -707,7 +707,35 @@ export const generateVideoFromImage = async (
       },
       onProgress
     );
-    return result.videoUrl;
+    return { videoUrl: result.videoUrl, jobId: result.jobId };
+  }
+};
+
+// ============================================================
+// Video Path Resolution (for merge)
+// ============================================================
+
+/**
+ * Get the video file path on the server from a job_id.
+ * This queries the job status to get the actual file path, avoiding re-upload.
+ */
+export const getVideoPathFromJob = async (jobId: string): Promise<string | null> => {
+  try {
+    const resp = await flowFetch(`/api/jobs/${jobId}`);
+    if (!resp.ok) {
+      console.warn(`[getVideoPathFromJob] Job ${jobId} not found: ${resp.status}`);
+      return null;
+    }
+    const job = await resp.json();
+    const videos = job.videos || [];
+    if (videos.length > 0) {
+      return videos[0]; // Return the first video path
+    }
+    console.warn(`[getVideoPathFromJob] Job ${jobId} has no video files`);
+    return null;
+  } catch (e) {
+    console.error(`[getVideoPathFromJob] Error:`, e);
+    return null;
   }
 };
 
