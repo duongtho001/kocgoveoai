@@ -818,13 +818,28 @@ const KocReviewModule: React.FC<KocReviewModuleProps> = ({ language = 'vi' }) =>
       const customPrompt = state.images[key]?.customPrompt || "";
       const isNoProduct = noProductKeywords.some(kw => customPrompt.toLowerCase().includes(kw));
 
+      // Convert image URL to base64 for Gemini AI (Flow API returns blob/http URLs, not base64)
+      let imageBase64 = state.images[key].url;
+      if (imageBase64 && !imageBase64.startsWith('data:')) {
+        try {
+          const resp = await fetch(imageBase64);
+          const blob = await resp.blob();
+          imageBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(blob);
+          });
+        } catch { imageBase64 = ''; }
+      }
+
       const prompt = await service.generateKocVeoPrompt(
         state.productName,
         state.script[key],
         state.gender,
         state.voice,
         productImageData,
-        state.images[key].url,
+        imageBase64,
         isNoProduct,
         state.imageStyle,
         language

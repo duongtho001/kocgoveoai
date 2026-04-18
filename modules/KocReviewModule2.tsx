@@ -1271,6 +1271,55 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     );
   };
 
+  // ═══════════ Merge All Videos ═══════════
+  const handleMergeAllVideos = async () => {
+    const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+    const videoKeys = activeKeys.filter(k => state.images?.[k]?.videoUrl);
+    
+    if (videoKeys.length < 2) {
+      alert('Cần ít nhất 2 video để nối. Hãy tạo video trước.');
+      return;
+    }
+
+    setState((p: any) => ({ ...p, isMergingVideos: true, mergeStep: 'Đang chuẩn bị video...' }));
+
+    try {
+      // Convert all video URLs to server paths
+      const videoPaths: string[] = [];
+      for (let i = 0; i < videoKeys.length; i++) {
+        const key = videoKeys[i];
+        const videoUrl = state.images[key].videoUrl;
+        setState((p: any) => ({ ...p, mergeStep: `Đang upload video ${i + 1}/${videoKeys.length}...` }));
+        
+        const path = await flowApi.videoUrlToPath(videoUrl);
+        videoPaths.push(path);
+      }
+
+      setState((p: any) => ({ ...p, mergeStep: 'Đang nối video...' }));
+      
+      const result = await flowApi.mergeVideos(
+        videoPaths,
+        `merged_${state.productName || 'koc'}_${Date.now()}`
+      );
+
+      if (result.videoUrl) {
+        setState((p: any) => ({ 
+          ...p, 
+          mergedVideoUrl: result.videoUrl,
+          isMergingVideos: false, 
+          mergeStep: '' 
+        }));
+        alert('✅ Đã nối video thành công!');
+      } else {
+        throw new Error('Không nhận được video đã merge');
+      }
+    } catch (e: any) {
+      console.error('[MergeVideos] Failed:', e);
+      alert(`Lỗi nối video: ${e.message}`);
+      setState((p: any) => ({ ...p, isMergingVideos: false, mergeStep: '' }));
+    }
+  };
+
   // ═══════════ FULL WORKFLOW: Script → Image → Video Prompt → Video ═══════════
   const handleFullWorkflow = async () => {
     if (state.isFullWorkflowRunning) return;
@@ -1454,6 +1503,26 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       // STEP 4: Tạo tất cả Video Prompt (Gemini AI)
       // ══════════════════════════════════════════════════════
       const { videoPromptConcurrency } = getConcurrencySettings();
+
+      // Helper: convert image URL (blob/http) → base64 dataUrl
+      const urlToBase64 = async (url: string): Promise<string> => {
+        if (!url) return '';
+        // Already base64
+        if (url.startsWith('data:')) return url;
+        try {
+          const resp = await fetch(url);
+          const blob = await resp.blob();
+          return new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(blob);
+          });
+        } catch {
+          return '';
+        }
+      };
+
       const genVideoPrompt = async (key: string) => {
         setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
         try {
@@ -1473,12 +1542,20 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: false } } }));
             return;
           }
+          // Convert image URL to base64 for Gemini AI (Flow API returns blob/http URLs, not base64)
+          const imageBase64 = await urlToBase64(imageUrl);
+          if (!imageBase64) {
+            console.warn(`[FullPipeline] ⚠️ Cannot convert image to base64 for ${key}, skipping video prompt`);
+            setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: false } } }));
+            return;
+          }
           const prompt = await service.generateKocVeoPrompt(
             state.productName, script[key], state.gender, state.voice,
-            productImageData, imageUrl, false, state.imageStyle, '', language
+            productImageData, imageBase64, false, state.imageStyle, '', language
           );
           setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { text: prompt, loading: false, visible: true } } }));
         } catch (e) {
+          console.error(`[FullPipeline] Video prompt failed for ${key}:`, e);
           setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: false } } }));
         }
       };
@@ -1563,13 +1640,28 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       const isNoProduct = noProductKeywords.some(kw => customPrompt.toLowerCase().includes(kw));
       const currentFormat = state.images[key]?.format || "";
 
+      // Convert image URL to base64 for Gemini AI (Flow API returns blob/http URLs, not base64)
+      let imageBase64 = state.images[key].url;
+      if (imageBase64 && !imageBase64.startsWith('data:')) {
+        try {
+          const resp = await fetch(imageBase64);
+          const blob = await resp.blob();
+          imageBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(blob);
+          });
+        } catch { imageBase64 = ''; }
+      }
+
       const prompt = await service.generateKocVeoPrompt(
         state.productName,
         state.script[key],
         state.gender,
         state.voice,
         productImageData,
-        state.images[key].url,
+        imageBase64,
         isNoProduct,
         state.imageStyle,
         currentFormat,
@@ -2233,7 +2325,57 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
               >
                 🎥 Tạo tất cả Video
               </button>
+              {flowApi.isFlowApiAvailable() && (() => {
+                const activeKeys2 = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
+                const videoCount = activeKeys2.filter(k => state.images?.[k]?.videoUrl).length;
+                return videoCount >= 2 ? (
+                  <button
+                    onClick={handleMergeAllVideos}
+                    disabled={state.isMergingVideos}
+                    className={`w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
+                      state.isMergingVideos 
+                        ? 'bg-gradient-to-r from-emerald-400 to-teal-400 cursor-wait' 
+                        : 'bg-gradient-to-r from-emerald-600 to-teal-600'
+                    }`}
+                  >
+                    {state.isMergingVideos ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        {state.mergeStep || 'Đang nối...'}
+                      </>
+                    ) : (
+                      <>🎬 Nối {videoCount} Video</>
+                    )}
+                  </button>
+                ) : null;
+              })()}
             </div>
+
+            {/* ═══ Merged Video Player ═══ */}
+            {state.mergedVideoUrl && (
+              <div className="w-full px-4">
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl border border-emerald-200 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-black text-emerald-800 uppercase tracking-widest flex items-center gap-2">
+                      🎬 Video đã nối hoàn chỉnh
+                    </h3>
+                    <a 
+                      href={state.mergedVideoUrl} 
+                      download={`merged_${state.productName || 'video'}.mp4`}
+                      className="px-4 py-2 bg-emerald-600 text-white text-[10px] font-black rounded-xl uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      Tải xuống
+                    </a>
+                  </div>
+                  <video 
+                    src={state.mergedVideoUrl} 
+                    controls 
+                    className="w-full max-h-[500px] rounded-xl shadow-lg border border-emerald-100"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* ═══ Video Gallery ═══ */}
             {(() => {
