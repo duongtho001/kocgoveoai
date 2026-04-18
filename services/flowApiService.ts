@@ -506,6 +506,45 @@ export const multiRefVideo = async (
 };
 
 // ============================================================
+// Extend Video (mở rộng video tuần tự)
+// ============================================================
+
+export const extendVideo = async (
+  mode: 't2v' | 'i2v' | 'r2v',
+  prompts: string[],
+  options: {
+    aspect_ratio?: string;
+    model_tier?: string;
+    auto_merge?: boolean;
+    image_path?: string;      // I2V mode
+    image_paths?: string[];   // R2V mode
+  } = {},
+  onProgress?: FlowProgressCallback
+): Promise<{ jobId: string; videoUrl: string }> => {
+  const body: any = {
+    mode,
+    prompts,
+    aspect_ratio: options.aspect_ratio || '9:16',
+    model_tier: options.model_tier || 'VEO_FLOW',
+    auto_merge: options.auto_merge ?? true,
+  };
+  if (mode === 'i2v' && options.image_path) body.image_path = options.image_path;
+  if (mode === 'r2v' && options.image_paths) body.image_paths = options.image_paths;
+
+  const resp = await flowFetch('/api/extend-video', {
+    method: 'POST',
+    body,
+  });
+
+  if (!resp.ok) throw new Error(`Extend failed: ${resp.status}`);
+  const { job_id } = await resp.json();
+
+  const job = await waitForJob(job_id, onProgress);
+  const videoUrl = isProduction() ? await fetchBlobUrl(job_id, 'video') : getVideoUrl(job_id);
+  return { jobId: job_id, videoUrl };
+};
+
+// ============================================================
 // Pipeline Helpers (end-to-end)
 // ============================================================
 
