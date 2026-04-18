@@ -278,37 +278,73 @@ export const getVideoUrl = (jobId: string): string => {
 
 /**
  * Fetch binary content (image/video) via proxy and return blob URL
+ * For video: retries up to 3 times with delay (video file may not be ready immediately)
  */
 export const fetchBlobUrl = async (jobId: string, type: 'image' | 'video', index: number = 0): Promise<string> => {
   const path = type === 'image' ? `/api/jobs/${jobId}/image?index=${index}` : `/api/jobs/${jobId}/video`;
   const API = getApiUrl();
   const directUrl = `${API}${path}`;
-  
-  try {
-    // Try direct fetch from Flow API server (works when CORS is enabled / Cloudflare tunnel)
-    const resp = await fetch(directUrl);
-    if (!resp.ok) throw new Error(`Direct fetch failed: ${resp.status}`);
-    const blob = await resp.blob();
-    return URL.createObjectURL(blob);
-  } catch (directErr) {
-    console.warn(`[fetchBlobUrl] Direct fetch failed, trying proxy...`, directErr);
-    // Fallback: proxy through Vercel (may hit size limits for large files)
-    const resp = await fetch('/api/flow-proxy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method: 'GET', path }),
-    });
-    if (!resp.ok) throw new Error(`Fetch ${type} failed: ${resp.status}`);
-    const data = await resp.json();
-    if (data.data && data.mimeType) {
-      const binary = atob(data.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: data.mimeType });
+  const maxRetries = type === 'video' ? 3 : 1;
+  const retryDelay = 3000; // 3 seconds
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Try direct fetch from Flow API server (works when CORS is enabled / Cloudflare tunnel)
+      const resp = await fetch(directUrl);
+      if (!resp.ok) {
+        if (resp.status === 404 && attempt < maxRetries) {
+          console.warn(`[fetchBlobUrl] ${type} not ready (attempt ${attempt}/${maxRetries}), retrying in ${retryDelay/1000}s...`);
+          await new Promise(r => setTimeout(r, retryDelay));
+          continue;
+        }
+        throw new Error(`Direct fetch failed: ${resp.status}`);
+      }
+      const blob = await resp.blob();
       return URL.createObjectURL(blob);
+    } catch (directErr: any) {
+      // If it's a retry-able 404 and we haven't exhausted attempts, the continue above handles it
+      // For other errors or last attempt, try proxy
+      if (attempt < maxRetries && directErr.message?.includes('404')) {
+        console.warn(`[fetchBlobUrl] Retry ${attempt}/${maxRetries}...`);
+        await new Promise(r => setTimeout(r, retryDelay));
+        continue;
+      }
+      
+      console.warn(`[fetchBlobUrl] Direct fetch failed, trying proxy...`, directErr);
+      try {
+        // Fallback: proxy through Vercel (may hit size limits for large files)
+        const resp = await fetch('/api/flow-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'GET', path }),
+        });
+        if (!resp.ok) {
+          if (resp.status === 404 && attempt < maxRetries) {
+            console.warn(`[fetchBlobUrl] Proxy also 404 (attempt ${attempt}/${maxRetries}), retrying...`);
+            await new Promise(r => setTimeout(r, retryDelay));
+            continue;
+          }
+          throw new Error(`Fetch ${type} failed: ${resp.status}`);
+        }
+        const data = await resp.json();
+        if (data.data && data.mimeType) {
+          const binary = atob(data.data);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: data.mimeType });
+          return URL.createObjectURL(blob);
+        }
+        throw new Error(`Invalid proxy response for ${type}`);
+      } catch (proxyErr: any) {
+        if (attempt < maxRetries && proxyErr.message?.includes('404')) {
+          await new Promise(r => setTimeout(r, retryDelay));
+          continue;
+        }
+        throw proxyErr;
+      }
     }
-    throw new Error(`Invalid proxy response for ${type}`);
   }
+  throw new Error(`Failed to fetch ${type} after ${maxRetries} attempts`);
 };
 
 // ============================================================
