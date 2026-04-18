@@ -154,7 +154,7 @@ const createOpenRouterAdapter = (apiKey: string) => {
             messages,
             response_format,
             temperature: 0.7,
-            max_tokens: 8192,
+            max_tokens: 16384,
           }),
         });
 

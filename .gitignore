@@ -25,3 +25,5 @@ migrated_prompt_history/
 firebase-applet-config.json
 firebase-blueprint.json
 firestore.rules
+
+.vercel

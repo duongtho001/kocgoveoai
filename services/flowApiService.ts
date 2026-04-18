@@ -281,8 +281,18 @@ export const getVideoUrl = (jobId: string): string => {
  */
 export const fetchBlobUrl = async (jobId: string, type: 'image' | 'video', index: number = 0): Promise<string> => {
   const path = type === 'image' ? `/api/jobs/${jobId}/image?index=${index}` : `/api/jobs/${jobId}/video`;
+  const API = getApiUrl();
+  const directUrl = `${API}${path}`;
   
-  if (isProduction()) {
+  try {
+    // Try direct fetch from Flow API server (works when CORS is enabled / Cloudflare tunnel)
+    const resp = await fetch(directUrl);
+    if (!resp.ok) throw new Error(`Direct fetch failed: ${resp.status}`);
+    const blob = await resp.blob();
+    return URL.createObjectURL(blob);
+  } catch (directErr) {
+    console.warn(`[fetchBlobUrl] Direct fetch failed, trying proxy...`, directErr);
+    // Fallback: proxy through Vercel (may hit size limits for large files)
     const resp = await fetch('/api/flow-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -291,7 +301,6 @@ export const fetchBlobUrl = async (jobId: string, type: 'image' | 'video', index
     if (!resp.ok) throw new Error(`Fetch ${type} failed: ${resp.status}`);
     const data = await resp.json();
     if (data.data && data.mimeType) {
-      // Convert base64 to blob URL
       const binary = atob(data.data);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -299,12 +308,6 @@ export const fetchBlobUrl = async (jobId: string, type: 'image' | 'video', index
       return URL.createObjectURL(blob);
     }
     throw new Error(`Invalid proxy response for ${type}`);
-  } else {
-    const API = getApiUrl();
-    const resp = await fetch(`${API}${path}`);
-    if (!resp.ok) throw new Error(`Fetch ${type} failed: ${resp.status}`);
-    const blob = await resp.blob();
-    return URL.createObjectURL(blob);
   }
 };
 
@@ -666,17 +669,32 @@ export const generateVideoFromImage = async (
   if (options.voice) {
     // ── R2V: Reference-to-Video (hỗ trợ voice + ảnh tham chiếu) ──
     console.log(`[generateVideo] R2V mode — voice: ${options.voice}`);
-    const result = await multiRefVideo(
-      [{ image_paths: [imagePath], prompt }],
-      {
-        aspect_ratio: options.aspect_ratio || '9:16',
-        model_tier: options.model_tier || 'VEO_FLOW',
-        video_length_seconds: options.video_length_seconds || 10,
-        voice: options.voice,
-      },
-      onProgress
-    );
-    return result.videoUrl;
+    try {
+      const result = await multiRefVideo(
+        [{ image_paths: [imagePath], prompt }],
+        {
+          aspect_ratio: options.aspect_ratio || '9:16',
+          model_tier: options.model_tier || 'VEO_FLOW',
+          video_length_seconds: options.video_length_seconds || 10,
+          voice: options.voice,
+        },
+        onProgress
+      );
+      return result.videoUrl;
+    } catch (r2vErr: any) {
+      // R2V+voice failed (Google 500) → fallback to I2V without voice
+      console.warn(`[generateVideo] R2V+voice failed: ${r2vErr.message}. Falling back to I2V (no voice)...`);
+      const fallback = await imageToVideo(
+        [{ image_path: imagePath, prompt }],
+        {
+          aspect_ratio: options.aspect_ratio || '9:16',
+          model_tier: options.model_tier || 'VEO_FLOW',
+          video_length_seconds: options.video_length_seconds || 8,
+        },
+        onProgress
+      );
+      return fallback.videoUrl;
+    }
   } else {
     // ── I2V: Image-to-Video (không voice) ──
     console.log('[generateVideo] I2V mode — no voice');
@@ -807,10 +825,14 @@ export interface FlowServerConcurrency {
 /**
  * Get server-side concurrency settings from Flow API
  */
-export const getFlowServerConcurrency = async (): Promise<FlowServerConcurrency> => {
-  const resp = await flowFetch('/admin/api/concurrency');
-  if (!resp.ok) throw new Error(`Failed to get concurrency: ${resp.status}`);
-  return resp.json();
+export const getFlowConcurrencySettings = async (): Promise<FlowServerConcurrency | null> => {
+  try {
+    const resp = await flowFetch('/admin/api/concurrency');
+    if (!resp.ok) return null;
+    return resp.json();
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -822,11 +844,15 @@ export const updateFlowServerConcurrency = async (settings: {
   public_video_concurrency?: number;
   public_image_concurrency?: number;
   account_slots?: { profile: string; max_slots: number }[];
-}): Promise<FlowServerConcurrency> => {
-  const resp = await flowFetch('/admin/api/concurrency', {
-    method: 'PUT',
-    body: settings,
-  });
-  if (!resp.ok) throw new Error(`Failed to update concurrency: ${resp.status}`);
-  return resp.json();
+}): Promise<FlowServerConcurrency | null> => {
+  try {
+    const resp = await flowFetch('/admin/api/concurrency', {
+      method: 'PUT',
+      body: settings,
+    });
+    if (!resp.ok) return null;
+    return resp.json();
+  } catch {
+    return null;
+  }
 };

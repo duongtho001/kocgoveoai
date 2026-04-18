@@ -242,7 +242,7 @@ const App: React.FC = () => {
         .select('*')
         .eq('username', username.trim())
         .eq('password', password.trim())
-        .single();
+        .maybeSingle();
 
       if (error || !userData) {
         setLoginError('Sai thông tin tên hoặc mật khẩu\nVui lòng liên hệ Admin');
