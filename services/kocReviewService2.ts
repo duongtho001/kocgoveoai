@@ -742,30 +742,27 @@ export const generateKocVeoPrompt = async (
       - [SẢN PHẨM PHẢI GIỐNG ẢNH THAM CHIẾU 100%, KHÔNG BIẾN DẠNG]`
 
   const instructionPrompt = `
-  Nhiệm vụ: Viết một lời nhắc (Prompt) chi tiết để tạo video AI (VEO-3) dài 8 giây cho video KOC Review.
-  PHONG CÁCH VIDEO: ${is3D ? "Hoạt hình 3D / Phong cách CGI" : "Ảnh chụp thực tế / Phong cách đời thực"}.
+  Nhiệm vụ: Viết một lời nhắc (Prompt) NGẮN GỌN để tạo video AI (R2V) dài 8 giây từ ảnh tham chiếu.
+  
+  !!! QUY TẮC TUYỆT ĐỐI !!!
+  - Video phải GIỮ NGUYÊN 100% cảnh trong ảnh tham chiếu (bối cảnh, nhân vật, trang phục, góc máy).
+  - KHÔNG mô tả lại nhân vật hay bối cảnh — AI đã có ảnh tham chiếu.
+  - KHÔNG thay đổi cảnh, KHÔNG cắt cảnh, KHÔNG chuyển cảnh.
+  - Chỉ thêm CHUYỂN ĐỘNG NHẸ và LỜI THOẠI.
+
   ${formatRule}
 
-!!! CRITICAL RULE: ONE CONTINUOUS SHOT (QUAN TRỌNG: MỘT CÚ MÁY LIỀN MẠCH) !!!
-  - Video phải là một cảnh quay liên tục (Single Take).
-  - TUYỆT ĐỐI KHÔNG CẮT CẢNH (NO CUTS).
-  - TUYỆT ĐỐI KHÔNG CHUYỂN CẢNH (NO SCENE TRANSITIONS).
-  - Duy trì 100% sự nhất quán về bối cảnh và trang phục (nếu có nhân vật).
+  CẤU TRÚC PROMPT (NGẮN GỌN):
+  1. CHUYỂN ĐỘNG: Chỉ mô tả chuyển động nhẹ phù hợp cảnh (VD: nhân vật hơi nghiêng đầu, mỉm cười, giơ sản phẩm lên, hít thở nhẹ, gật đầu...). TUYỆT ĐỐI KHÔNG thay đổi tư thế lớn.
+  2. LỜI THOẠI: 
+     - GIỚI TÍNH: ${voiceGender}.
+     - GIỌNG: "${voice}" (${voiceDetail}).
+     - NỘI DUNG: "${scriptText}"
+     - Khớp môi tự nhiên${imageFormat === 'no_character' ? '' : ', biểu cảm nhẹ nhàng'}.
+  3. CAMERA: Giữ nguyên góc máy, chuyển động rất chậm (gần như tĩnh). 
+  4. KỸ THUẬT: ${is3D ? "3D CGI" : "Realistic"}, 4K, 60fps, không nhạc nền, single continuous shot.
 
-  CẤU TRÚC LỜI NHẮC:
-  PHẦN 1: CHỦ THỂ & DIỆN MẠO. ${imageFormat === 'no_character' ? `Tập trung vào sản phẩm "${productName}".` : `Mô tả nhân vật/bàn tay, trang phục và khuôn mặt (nếu có) y hệt ảnh tham chiếu.`}
-  ${productInteractionRule}
-  PHẦN 3: BỐI CẢNH & ÁNH SÁNG. Không gian đồng nhất với bối cảnh ảnh tham chiếu (${context}).
-  PHẦN 4: CHUYỂN ĐỘNG MÁY ẢNH (9:16). Chuyển động chậm (slow motion) vào chủ thể hoặc sản phẩm. Tuyệt đối không thay đổi bối cảnh trong suốt 8 giây.
-  PHẦN 5: LỜI THOẠI (DÙNG CHO ĐỒNG BỘ GIỌNG NÓI CHI TIẾT): 
-  - GIỚI TÍNH: ${voiceGender}.
-  - NHÃN GIỌNG NÓI: "${voice}".
-  - ĐẶC ĐIỂM CHI TIẾT (VÙNG MIỀN & ĐỘ TUỔI): "${voiceDetail}".
-  - NỘI DUNG LỜI THOẠI: "${scriptText}"
-  => Yêu cầu: Khớp môi (Lip-sync) hoàn hảo (nếu có mặt) và biểu cảm cực kỳ tự nhiên theo ngữ điệu vùng miền được chỉ định.
-  PHẦN 6: CHẤT LƯỢNG KỸ THUẬT: 4K, 60fps, Không có nhạc nền, Không hiệu ứng chuyển cảnh.
-
-  YÊU CẦU: Trả về 1 đoạn văn bản Tiếng Việt duy nhất mô tả chi tiết toàn bộ video. Không xuống dòng.`;
+  YÊU CẦU: Trả về 1 đoạn văn ngắn (2-3 câu) Tiếng Việt. Không xuống dòng. KHÔNG mô tả lại ngoại hình nhân vật. KHÔNG mô tả lại bối cảnh. Chỉ tập trung vào CHUYỂN ĐỘNG + LỜI THOẠI.`;
 
   const contents: any[] = [{ text: instructionPrompt }];
   if (productImageData) {
