@@ -1644,9 +1644,17 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         const concurrency = Math.min(numVideoWorkers, videoKeys.length);
         let nextVideoIdx = 0;
 
-        const videoWorker = async () => {
+        const videoWorker = async (workerIdx: number) => {
+          // Stagger: worker 2 waits 3s to let server queue settle
+          if (workerIdx > 0) {
+            const staggerDelay = workerIdx * 3000;
+            console.log(`[FullPipeline] Step 5: Worker ${workerIdx + 1} waiting ${staggerDelay/1000}s stagger...`);
+            await new Promise(r => setTimeout(r, staggerDelay));
+          }
+
           while (nextVideoIdx < videoKeys.length) {
             const idx = nextVideoIdx++;
+            if (idx >= videoKeys.length) break;
             const key = videoKeys[idx];
             
             const latestState2 = await new Promise<any>(resolve => {
@@ -1656,7 +1664,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             const vPrompt = latestState2.videoPrompts[key]?.text;
             if (!imgUrl || !vPrompt) continue;
             
-            console.log(`[FullPipeline] Step 5: Starting video ${key} (${idx + 1}/${videoKeys.length})`);
+            console.log(`[FullPipeline] Step 5: Worker ${workerIdx + 1} starting video ${key} (${idx + 1}/${videoKeys.length})`);
             setState((prev: any) => ({
               ...prev,
               images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
@@ -1683,7 +1691,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         };
 
         console.log(`[FullPipeline] Step 5: Launching ${concurrency} video workers for ${videoKeys.length} scenes`);
-        const workers = Array.from({ length: concurrency }, () => videoWorker());
+        const workers = Array.from({ length: concurrency }, (_, i) => videoWorker(i));
         await Promise.all(workers);
       }
 

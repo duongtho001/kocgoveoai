@@ -611,16 +611,24 @@ export const generateKocImageBatch = async (
   console.log(`[BatchImage] ${items.length} scenes, concurrency=${concurrency}, mode=${useR2I ? 'R2I' : 'T2I'}`);
 
   // Step 3: Generate each scene as INDIVIDUAL request
-  // Concurrency pool: N scenes run in parallel (N = number of profiles)
-  // When one finishes, next scene starts immediately
+  // Sequential within each worker, parallel across workers (1 worker per profile)
+  // Stagger worker starts to avoid server-side race conditions
   const results: { key: string; url: string }[] = new Array(items.length);
   let nextIdx = 0;
 
-  const generateOne = async (): Promise<void> => {
+  const generateOne = async (workerIdx: number): Promise<void> => {
+    // Stagger: worker 1 starts immediately, worker 2 waits 2s, worker 3 waits 4s...
+    if (workerIdx > 0) {
+      const staggerDelay = workerIdx * 2000;
+      console.log(`[BatchImage] Worker ${workerIdx + 1}: waiting ${staggerDelay/1000}s stagger...`);
+      await new Promise(r => setTimeout(r, staggerDelay));
+    }
+
     while (nextIdx < items.length) {
       const idx = nextIdx++;
+      if (idx >= items.length) break; // Safety check
       const item = items[idx];
-      console.log(`[BatchImage] Starting scene ${item.key} (${idx + 1}/${items.length})`);
+      console.log(`[BatchImage] Worker ${workerIdx + 1}: Starting scene ${item.key} (${idx + 1}/${items.length})`);
       
       try {
         let imageUrl = '';
@@ -637,6 +645,7 @@ export const generateKocImageBatch = async (
               onProgress
             );
             imageUrl = result.imageUrls?.[0] || '';
+            console.log(`[BatchImage] ${item.key}: R2I job=${result.jobId}, url=${imageUrl.substring(0, 60)}...`);
           } catch (r2iErr: any) {
             console.warn(`[BatchImage] R2I failed for ${item.key}, trying T2I:`, r2iErr.message);
             // Fallback to T2I
@@ -671,12 +680,19 @@ export const generateKocImageBatch = async (
     }
   };
 
-  // Launch N workers in parallel (N = concurrency = num profiles)
-  const workers = Array.from({ length: concurrency }, () => generateOne());
+  // Launch N workers with stagger (N = concurrency = num profiles)
+  const workers = Array.from({ length: concurrency }, (_, i) => generateOne(i));
   await Promise.all(workers);
 
-  const successCount = results.filter(r => r.url).length;
-  console.log(`[BatchImage] ✅ Complete: ${successCount}/${items.length} images, ${concurrency} concurrent workers`);
+  // Check for duplicate URLs
+  const urls = results.filter(r => r?.url).map(r => r.url);
+  const uniqueUrls = new Set(urls);
+  if (uniqueUrls.size < urls.length) {
+    console.warn(`[BatchImage] ⚠️ DUPLICATE DETECTED: ${urls.length} images but only ${uniqueUrls.size} unique URLs`);
+  }
+
+  const successCount = results.filter(r => r?.url).length;
+  console.log(`[BatchImage] ✅ Complete: ${successCount}/${items.length} images, ${concurrency} workers, ${uniqueUrls.size} unique`);
   
   if (successCount === 0) {
     throw new Error('Flow API: không tạo được ảnh nào');
