@@ -719,8 +719,45 @@ export const generateVideoFromImage = async (
  * Upload video lên Flow API server để lấy path cho merge
  */
 export const uploadVideo = async (file: File): Promise<string> => {
-  // Reuse uploadImage — same endpoint, works with proxy on production
-  return uploadImage(file);
+  const API = getApiUrl();
+  if (!API) throw new Error('Flow API URL not configured');
+  
+  try {
+    // Try direct upload to Flow API server (works when CORS is enabled)
+    const fd = new FormData();
+    fd.append('file', file);
+    const resp = await fetch(`${API}/api/upload-video`, {
+      method: 'POST',
+      headers: getHeaders(false),
+      body: fd
+    });
+    if (!resp.ok) throw new Error(`Direct upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return data.path;
+  } catch (directErr) {
+    console.warn('[uploadVideo] Direct upload failed, trying base64 proxy...', directErr);
+    // Fallback: convert to base64 and send through proxy
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    
+    const resp = await fetch('/api/flow-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'POST',
+        path: '/api/upload-video',
+        body: { data: base64, filename: file.name, mimeType: 'video/mp4' },
+      }),
+    });
+    if (!resp.ok) throw new Error(`Proxy upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return data.path;
+  }
 };
 
 /**
@@ -772,22 +809,28 @@ export const videoUrlToPath = async (videoUrl: string): Promise<string> => {
   if (videoUrl.startsWith('/api/') || videoUrl.startsWith('output/') || videoUrl.includes('/api/jobs/')) {
     // Extract path nếu là full URL
     const url = new URL(videoUrl, getApiUrl());
-    // For job video URLs, we need the actual file path
+    // For job video URLs like /api/jobs/{id}/video → extract job_id and use video path
     if (url.pathname.includes('/api/jobs/') && url.pathname.includes('/video')) {
-      // Download video and re-upload to get a file path
-      const resp = await fetch(videoUrl);
-      const blob = await resp.blob();
-      const file = new File([blob], 'video.mp4', { type: 'video/mp4' });
-      return uploadVideo(file);
+      const match = url.pathname.match(/\/api\/jobs\/([^/]+)\/video/);
+      if (match) {
+        // Return the job's video path directly — server knows where it is
+        return `job_video:${match[1]}`;
+      }
     }
     return url.pathname;
   }
 
-  // Download and upload
-  const resp = await fetch(videoUrl);
-  const blob = await resp.blob();
-  const file = new File([blob], 'video.mp4', { type: 'video/mp4' });
-  return uploadVideo(file);
+  // For blob URLs or remote URLs: fetch → upload to server
+  try {
+    const resp = await fetch(videoUrl);
+    if (!resp.ok) throw new Error(`Fetch video failed: ${resp.status}`);
+    const blob = await resp.blob();
+    const file = new File([blob], `video_${Date.now()}.mp4`, { type: 'video/mp4' });
+    return uploadVideo(file);
+  } catch (e: any) {
+    console.error('[videoUrlToPath] Failed:', e);
+    throw new Error(`Upload failed: ${e.message}`);
+  }
 };
 
 /**
