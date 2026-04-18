@@ -581,14 +581,14 @@ export const generateKocImageBatch = async (
   
   const upscaleOpt = imageQuality === '4K' ? '4K' : undefined;
   
-  // Step 1: Query server for profile count
-  let numProfiles = 1;
+  // Step 1: Query server for profile count → dùng làm concurrency
+  let numProfiles = maxConcurrency;
   try {
     const serverInfo = await flowApi.getFlowServerConcurrency();
     numProfiles = Math.max(1, (serverInfo.accounts || []).length);
-    console.log(`[BatchImage] Server has ${numProfiles} profile(s)`);
+    console.log(`[BatchImage] Server has ${numProfiles} profile(s), using as concurrency`);
   } catch {
-    console.warn('[BatchImage] Cannot query server profiles, using 1');
+    console.warn('[BatchImage] Cannot query server profiles, using maxConcurrency=' + maxConcurrency);
   }
 
   // Step 2: Upload refs ONCE (shared across all requests)
@@ -606,105 +606,83 @@ export const generateKocImageBatch = async (
     }
   }
   
-  // Step 3: Split items across profiles
-  // 1 profile → 1 request (server handles internal concurrency via semaphore)
-  // 2+ profiles → split evenly, each profile uses FULL maxConcurrency (setting = per profile)
-  const chunks: { key: string; prompt: string }[][] = [];
-  const concurrencyPerChunk = maxConcurrency; // Setting "Ảnh AI" = concurrency PER profile
-  
-  if (numProfiles <= 1) {
-    chunks.push([...items]);
-    console.log(`[BatchImage] 1 profile → 1 request with ${items.length} prompts, concurrency=${maxConcurrency}`);
-  } else {
-    const perProfile = Math.ceil(items.length / numProfiles);
-    for (let i = 0; i < items.length; i += perProfile) {
-      chunks.push(items.slice(i, i + perProfile));
-    }
-    console.log(`[BatchImage] ${numProfiles} profiles → ${chunks.length} request(s), ${concurrencyPerChunk} concurrency each`);
-  }
-
-  // Step 4: Send requests in parallel (1 per profile)
   const useR2I = uploadedPaths.length > 0;
-  
-  const chunkResults = await Promise.allSettled(
-    chunks.map(async (chunk, chunkIdx) => {
-      const prompts = chunk.map(c => c.prompt);
+  const concurrency = Math.min(numProfiles, items.length);
+  console.log(`[BatchImage] ${items.length} scenes, concurrency=${concurrency}, mode=${useR2I ? 'R2I' : 'T2I'}`);
+
+  // Step 3: Generate each scene as INDIVIDUAL request
+  // Concurrency pool: N scenes run in parallel (N = number of profiles)
+  // When one finishes, next scene starts immediately
+  const results: { key: string; url: string }[] = new Array(items.length);
+  let nextIdx = 0;
+
+  const generateOne = async (): Promise<void> => {
+    while (nextIdx < items.length) {
+      const idx = nextIdx++;
+      const item = items[idx];
+      console.log(`[BatchImage] Starting scene ${item.key} (${idx + 1}/${items.length})`);
       
       try {
-        if (useR2I) {
-          const result = await flowApi.referenceToImage(
-            prompts,
-            uploadedPaths,
-            {
-              aspect_ratio: '9:16',
-              upscale_quality: upscaleOpt,
-              max_concurrency: concurrencyPerChunk
-            },
-            onProgress
-          );
-          return { chunkIdx, imageUrls: result.imageUrls || [] };
-        } else {
-          const result = await flowApi.textToImage(
-            prompts,
-            {
-              aspect_ratio: '9:16',
-              upscale_quality: upscaleOpt,
-              max_concurrency: concurrencyPerChunk
-            },
-            onProgress
-          );
-          return { chunkIdx, imageUrls: result.imageUrls || [] };
-        }
-      } catch (e: any) {
-        console.error(`[BatchImage] Chunk ${chunkIdx + 1} failed:`, e.message);
-        // If R2I fails, try T2I for this chunk
+        let imageUrl = '';
+        
         if (useR2I) {
           try {
-            console.warn(`[BatchImage] Chunk ${chunkIdx + 1} R2I failed, trying T2I...`);
-            const result = await flowApi.textToImage(
-              prompts,
+            const result = await flowApi.referenceToImage(
+              [item.prompt],  // 1 prompt = 1 scene = 1 job
+              uploadedPaths,
               {
                 aspect_ratio: '9:16',
                 upscale_quality: upscaleOpt,
-                max_concurrency: concurrencyPerChunk
               },
               onProgress
             );
-            return { chunkIdx, imageUrls: result.imageUrls || [] };
-          } catch (t2iError) {
-            console.error(`[BatchImage] Chunk ${chunkIdx + 1} T2I also failed`);
+            imageUrl = result.imageUrls?.[0] || '';
+          } catch (r2iErr: any) {
+            console.warn(`[BatchImage] R2I failed for ${item.key}, trying T2I:`, r2iErr.message);
+            // Fallback to T2I
+            const result = await flowApi.textToImage(
+              [item.prompt],
+              {
+                aspect_ratio: '9:16',
+                upscale_quality: upscaleOpt,
+              },
+              onProgress
+            );
+            imageUrl = result.imageUrls?.[0] || '';
           }
+        } else {
+          const result = await flowApi.textToImage(
+            [item.prompt],
+            {
+              aspect_ratio: '9:16',
+              upscale_quality: upscaleOpt,
+            },
+            onProgress
+          );
+          imageUrl = result.imageUrls?.[0] || '';
         }
-        return { chunkIdx, imageUrls: [] as string[] };
+        
+        results[idx] = { key: item.key, url: imageUrl };
+        console.log(`[BatchImage] ✅ ${item.key} done (${idx + 1}/${items.length})`);
+      } catch (e: any) {
+        console.error(`[BatchImage] ❌ ${item.key} failed:`, e.message);
+        results[idx] = { key: item.key, url: '' };
       }
-    })
-  );
-
-  // Step 5: Merge results back in order
-  const allResults: { key: string; url: string }[] = [];
-  let itemIdx = 0;
-  
-  for (let ci = 0; ci < chunks.length; ci++) {
-    const chunk = chunks[ci];
-    const result = chunkResults[ci];
-    const imgUrls = result.status === 'fulfilled' ? result.value.imageUrls : [];
-    
-    for (let j = 0; j < chunk.length; j++) {
-      allResults.push({
-        key: chunk[j].key,
-        url: imgUrls[j] || ''
-      });
     }
-  }
+  };
 
-  const successCount = allResults.filter(r => r.url).length;
-  console.log(`[BatchImage] ✅ Complete: ${successCount}/${items.length} images across ${chunks.length} profile(s)`);
+  // Launch N workers in parallel (N = concurrency = num profiles)
+  const workers = Array.from({ length: concurrency }, () => generateOne());
+  await Promise.all(workers);
+
+  const successCount = results.filter(r => r.url).length;
+  console.log(`[BatchImage] ✅ Complete: ${successCount}/${items.length} images, ${concurrency} concurrent workers`);
   
   if (successCount === 0) {
     throw new Error('Flow API: không tạo được ảnh nào');
   }
   
-  return allResults;
+  return results;
 };
 
 /**
