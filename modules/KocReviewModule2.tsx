@@ -1568,43 +1568,73 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       console.log('[FullPipeline] ✅ Step 4: Video Prompts done');
 
       // ══════════════════════════════════════════════════════
-      // STEP 5: Tạo tất cả Video (Flow API)
+      // STEP 5: Tạo tất cả Video (Flow API — worker pool theo profiles)
       // ══════════════════════════════════════════════════════
       if (flowApi.isFlowApiAvailable()) {
-        const { videoConcurrency } = getConcurrencySettings();
-        const genVideo = async (key: string) => {
-          const latestState2 = await new Promise<any>(resolve => {
-            setState((prev: any) => { resolve(prev); return prev; });
-          });
-          const imgUrl = latestState2.images[key]?.url;
-          const vPrompt = latestState2.videoPrompts[key]?.text;
-          if (!imgUrl || !vPrompt) return;
-          setState((prev: any) => ({
-            ...prev,
-            images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
-          }));
-          try {
-            const videoUrl = await flowApi.generateVideoFromImage(
-              imgUrl, vPrompt,
-              { aspect_ratio: '9:16', voice: state.flowVoice || undefined }
-            );
+        // Auto-detect số profiles từ server
+        let numVideoWorkers = 1;
+        try {
+          const serverInfo = await flowApi.getFlowServerConcurrency();
+          numVideoWorkers = Math.max(1, (serverInfo.accounts || []).length);
+          console.log(`[FullPipeline] Step 5: ${numVideoWorkers} profile(s) detected for video`);
+        } catch {
+          const { videoConcurrency } = getConcurrencySettings();
+          numVideoWorkers = videoConcurrency;
+          console.warn(`[FullPipeline] Step 5: Cannot detect profiles, using setting=${numVideoWorkers}`);
+        }
+
+        // Get latest state to filter keys with images + prompts
+        const latestStateForFilter = await new Promise<any>(resolve => {
+          setState((prev: any) => { resolve(prev); return prev; });
+        });
+        const videoKeys = activeKeys.filter(key => {
+          return latestStateForFilter.images[key]?.url && latestStateForFilter.videoPrompts[key]?.text;
+        });
+
+        const concurrency = Math.min(numVideoWorkers, videoKeys.length);
+        let nextVideoIdx = 0;
+
+        const videoWorker = async () => {
+          while (nextVideoIdx < videoKeys.length) {
+            const idx = nextVideoIdx++;
+            const key = videoKeys[idx];
+            
+            const latestState2 = await new Promise<any>(resolve => {
+              setState((prev: any) => { resolve(prev); return prev; });
+            });
+            const imgUrl = latestState2.images[key]?.url;
+            const vPrompt = latestState2.videoPrompts[key]?.text;
+            if (!imgUrl || !vPrompt) continue;
+            
+            console.log(`[FullPipeline] Step 5: Starting video ${key} (${idx + 1}/${videoKeys.length})`);
             setState((prev: any) => ({
               ...prev,
-              images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+              images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
             }));
-          } catch (e) {
-            console.error(`WF Video failed for ${key}:`, e);
-            setState((prev: any) => ({
-              ...prev,
-              images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
-            }));
+            
+            try {
+              const videoUrl = await flowApi.generateVideoFromImage(
+                imgUrl, vPrompt,
+                { aspect_ratio: '9:16', voice: state.flowVoice || undefined }
+              );
+              setState((prev: any) => ({
+                ...prev,
+                images: { ...prev.images, [key]: { ...prev.images[key], videoUrl, videoLoading: false } }
+              }));
+              console.log(`[FullPipeline] Step 5: ✅ ${key} done (${idx + 1}/${videoKeys.length})`);
+            } catch (e) {
+              console.error(`[FullPipeline] Step 5: ❌ Video failed for ${key}:`, e);
+              setState((prev: any) => ({
+                ...prev,
+                images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+              }));
+            }
           }
         };
 
-        await runBatch(
-          activeKeys.map(key => ({ key, fn: () => genVideo(key) })),
-          videoConcurrency
-        );
+        console.log(`[FullPipeline] Step 5: Launching ${concurrency} video workers for ${videoKeys.length} scenes`);
+        const workers = Array.from({ length: concurrency }, () => videoWorker());
+        await Promise.all(workers);
       }
 
       setState((p: any) => ({ ...p, fullWorkflowStep: 'Hoàn thành! ✅', fullWorkflowProgress: 100 }));
