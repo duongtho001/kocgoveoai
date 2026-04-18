@@ -848,6 +848,7 @@ export const mergeVideos = async (
 
   if (!resp.ok) throw new Error(`Merge failed: ${resp.status}`);
   const data = await resp.json();
+  console.log('[mergeVideos] Server response:', JSON.stringify(data).substring(0, 200));
 
   // If it returns a job_id, wait for it
   if (data.job_id) {
@@ -856,11 +857,45 @@ export const mergeVideos = async (
     return { jobId: data.job_id, videoUrl };
   }
 
-  // If it returns directly (synchronous merge)
+  // Synchronous merge: server returns { merged_path, stream_url, ... }
   const API = getApiUrl();
+  const mergedPath = data.merged_path || data.output_path || '';
+  const streamUrl = data.stream_url || '';
+
+  let videoUrl = '';
+  if (streamUrl) {
+    // Use stream_url from server
+    videoUrl = streamUrl.startsWith('http') ? streamUrl : `${API}${streamUrl}`;
+  } else if (mergedPath) {
+    videoUrl = `${API}/api/storage/video?path=${encodeURIComponent(mergedPath)}`;
+  }
+
+  // On production, fetch the video through proxy to get a blob URL
+  if (isProduction() && videoUrl) {
+    try {
+      const proxyResp = await fetch('/api/flow-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: 'GET', path: streamUrl || `/api/storage/video?path=${encodeURIComponent(mergedPath)}` }),
+      });
+      if (proxyResp.ok) {
+        const proxyData = await proxyResp.json();
+        if (proxyData.data && proxyData.mimeType) {
+          const binary = atob(proxyData.data);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: proxyData.mimeType });
+          videoUrl = URL.createObjectURL(blob);
+        }
+      }
+    } catch (e) {
+      console.warn('[mergeVideos] Proxy fetch failed, using direct URL:', e);
+    }
+  }
+
   return {
-    jobId: data.job_id || 'direct',
-    videoUrl: data.output_path ? `${API}/api/storage/video?path=${encodeURIComponent(data.output_path)}` : data.url || ''
+    jobId: 'direct',
+    videoUrl
   };
 };
 
