@@ -1271,10 +1271,11 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     );
   };
 
-  // ═══════════ Merge All Videos ═══════════
-  const handleMergeAllVideos = async () => {
+  // ═══════════ Merge Selected Videos ═══════════
+  const handleMergeAllVideos = async (selectedKeys?: string[]) => {
     const activeKeys = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-    const videoKeys = activeKeys.filter(k => state.images?.[k]?.videoUrl && state.images?.[k]?.videoJobId);
+    // Use selected keys or auto-detect all available videos
+    const videoKeys = (selectedKeys || activeKeys).filter(k => state.images?.[k]?.videoUrl);
     
     if (videoKeys.length < 2) {
       alert('Cần ít nhất 2 video để nối. Hãy tạo video trước.');
@@ -1284,27 +1285,53 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     setState((p: any) => ({ ...p, isMergingVideos: true, mergeStep: 'Đang lấy đường dẫn video...' }));
 
     try {
-      // Get video paths from server using job_ids (no re-upload needed)
+      // Get video paths from server using job_ids
       const videoPaths: string[] = [];
+      const failedKeys: string[] = [];
+      
       for (let i = 0; i < videoKeys.length; i++) {
         const key = videoKeys[i];
         const jobId = state.images[key].videoJobId;
-        setState((p: any) => ({ ...p, mergeStep: `Đang lấy path video ${i + 1}/${videoKeys.length}...` }));
+        setState((p: any) => ({ ...p, mergeStep: `Đang lấy path video ${key} (${i + 1}/${videoKeys.length})...` }));
         
-        // Query server for the video file path using job_id
-        const path = await flowApi.getVideoPathFromJob(jobId);
-        if (path) {
-          videoPaths.push(path);
-        } else {
-          console.warn(`[MergeVideos] No video path for job ${jobId}`);
+        if (jobId) {
+          // Try getting path from job first
+          const path = await flowApi.getVideoPathFromJob(jobId);
+          if (path) {
+            videoPaths.push(path);
+            console.log(`[MergeVideos] ${key}: got path from job ${jobId}`);
+            continue;
+          }
         }
+        
+        // Fallback: try videoUrlToPath if no jobId or job not found
+        try {
+          const videoUrl = state.images[key].videoUrl;
+          if (videoUrl) {
+            const path = await flowApi.videoUrlToPath(videoUrl);
+            if (path) {
+              videoPaths.push(path);
+              console.log(`[MergeVideos] ${key}: got path via URL upload`);
+              continue;
+            }
+          }
+        } catch (e) {
+          console.warn(`[MergeVideos] ${key}: URL upload also failed`);
+        }
+        
+        failedKeys.push(key);
+        console.warn(`[MergeVideos] ${key}: no video path available`);
+      }
+
+      if (failedKeys.length > 0) {
+        console.warn(`[MergeVideos] Skipped ${failedKeys.length} video(s): ${failedKeys.join(', ')}`);
       }
 
       if (videoPaths.length < 2) {
-        throw new Error(`Chỉ tìm thấy ${videoPaths.length} video trên server. Cần ít nhất 2.`);
+        throw new Error(`Chỉ lấy được ${videoPaths.length} video path. Cần ít nhất 2. Bỏ qua: ${failedKeys.join(', ')}`);
       }
 
-      setState((p: any) => ({ ...p, mergeStep: 'Đang nối video...' }));
+      setState((p: any) => ({ ...p, mergeStep: `Đang nối ${videoPaths.length} video...` }));
       
       const result = await flowApi.mergeVideos(
         videoPaths,
@@ -1318,9 +1345,23 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
           isMergingVideos: false, 
           mergeStep: '' 
         }));
-        alert('✅ Đã nối video thành công!');
+        alert(`✅ Đã nối ${videoPaths.length} video thành công!`);
       } else {
-        throw new Error('Không nhận được video đã merge');
+        // Try getting merged video URL from response
+        const mergedPath = (result as any).merged_path || (result as any).mergedPath;
+        if (mergedPath) {
+          const API = import.meta.env.VITE_FLOW_API_URL || '';
+          const videoUrl = `${API}/api/storage/video?path=${encodeURIComponent(mergedPath)}`;
+          setState((p: any) => ({ 
+            ...p, 
+            mergedVideoUrl: videoUrl,
+            isMergingVideos: false, 
+            mergeStep: '' 
+          }));
+          alert(`✅ Đã nối ${videoPaths.length} video thành công!`);
+        } else {
+          throw new Error('Không nhận được video đã merge');
+        }
       }
     } catch (e: any) {
       console.error('[MergeVideos] Failed:', e);
@@ -2366,27 +2407,66 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
               </button>
               {flowApi.isFlowApiAvailable() && (() => {
                 const activeKeys2 = Array.from({ length: state.sceneCount }, (_, i) => `v${i + 1}`);
-                const videoCount = activeKeys2.filter(k => state.images?.[k]?.videoUrl).length;
-                return videoCount >= 2 ? (
-                  <button
-                    onClick={handleMergeAllVideos}
-                    disabled={state.isMergingVideos}
-                    className={`w-full md:w-auto px-8 py-4 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-sm flex items-center justify-center gap-3 uppercase tracking-widest ${
-                      state.isMergingVideos 
-                        ? 'bg-gradient-to-r from-emerald-400 to-teal-400 cursor-wait' 
-                        : 'bg-gradient-to-r from-emerald-600 to-teal-600'
-                    }`}
-                  >
-                    {state.isMergingVideos ? (
-                      <>
-                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        {state.mergeStep || 'Đang nối...'}
-                      </>
-                    ) : (
-                      <>🎬 Nối {videoCount} Video</>
-                    )}
-                  </button>
-                ) : null;
+                const availableVideos = activeKeys2.filter(k => state.images?.[k]?.videoUrl);
+                if (availableVideos.length < 2) return null;
+
+                // Use state for selected videos, default all available
+                const selected = state.mergeSelectedKeys || availableVideos;
+                const selectedCount = selected.filter((k: string) => availableVideos.includes(k)).length;
+
+                return (
+                  <div className="w-full flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {availableVideos.map((key: string) => {
+                        const isSelected = selected.includes(key);
+                        const sceneNum = key.replace('v', '');
+                        return (
+                          <label 
+                            key={key}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                              isSelected 
+                                ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400' 
+                                : 'bg-gray-100 text-gray-400 border-2 border-gray-200'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                const newSelected = e.target.checked
+                                  ? [...selected, key]
+                                  : selected.filter((k: string) => k !== key);
+                                setState((p: any) => ({ ...p, mergeSelectedKeys: newSelected }));
+                              }}
+                              className="w-3.5 h-3.5 accent-emerald-600"
+                            />
+                            Cảnh {sceneNum}
+                          </label>
+                        );
+                      })}
+                      <button
+                        onClick={() => handleMergeAllVideos(selected.filter((k: string) => availableVideos.includes(k)))}
+                        disabled={state.isMergingVideos || selectedCount < 2}
+                        className={`px-6 py-3 text-white font-black rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all text-xs flex items-center justify-center gap-2 uppercase tracking-widest ${
+                          state.isMergingVideos 
+                            ? 'bg-gradient-to-r from-emerald-400 to-teal-400 cursor-wait' 
+                            : selectedCount < 2
+                              ? 'bg-gray-300 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-emerald-600 to-teal-600'
+                        }`}
+                      >
+                        {state.isMergingVideos ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            {state.mergeStep || 'Đang nối...'}
+                          </>
+                        ) : (
+                          <>🎬 Nối {selectedCount} Video</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
               })()}
             </div>
 
