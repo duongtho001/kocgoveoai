@@ -1599,7 +1599,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             return;
           }
           const prompt = await service.generateKocVeoPrompt(
-            state.productName, script[key], state.gender, state.voice,
+            state.productName, script[key], state.gender, state.flowVoice,
             productImageData, imageBase64, false, state.imageStyle, '', language
           );
           setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { text: prompt, loading: false, visible: true } } }));
@@ -1746,7 +1746,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         state.productName,
         state.script[key],
         state.gender,
-        state.voice,
+        state.flowVoice,
         productImageData,
         imageBase64,
         isNoProduct,

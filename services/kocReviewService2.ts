@@ -717,7 +717,6 @@ export const generateKocVeoPrompt = async (
   language: string = "vi"
 ): Promise<string> => {
   const is3D = imageStyle === '3D';
-  const voiceDetail = getVoiceDetailedInstruction(voice);
   const voiceGender = gender === 'Nữ' ? 'Nữ' : 'Nam';
   const { persona, context } = getPersonaContext(language);
 
@@ -755,9 +754,8 @@ export const generateKocVeoPrompt = async (
   CẤU TRÚC PROMPT (NGẮN GỌN):
   1. CHUYỂN ĐỘNG: Chỉ mô tả chuyển động nhẹ phù hợp cảnh (VD: nhân vật hơi nghiêng đầu, mỉm cười, giơ sản phẩm lên, hít thở nhẹ, gật đầu...). TUYỆT ĐỐI KHÔNG thay đổi tư thế lớn.
   2. LỜI THOẠI: 
-     - GIỚI TÍNH: ${voiceGender}.
-     - GIỌNG: "${voice}" (${voiceDetail}).
-     - NỘI DUNG: "${scriptText}"
+     - Nhân vật ${voiceGender} nói tự nhiên, biểu cảm khớp nội dung.
+     - NỘI DUNG NÓI: "${scriptText}"
      - Khớp môi tự nhiên${imageFormat === 'no_character' ? '' : ', biểu cảm nhẹ nhàng'}.
   3. CAMERA: Giữ nguyên góc máy, chuyển động rất chậm (gần như tĩnh). 
   4. KỸ THUẬT: ${is3D ? "3D CGI" : "Realistic"}, 4K, 60fps, không nhạc nền, single continuous shot.
