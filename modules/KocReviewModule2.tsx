@@ -1633,17 +1633,10 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       // STEP 5: Tạo tất cả Video (Flow API — worker pool theo profiles)
       // ══════════════════════════════════════════════════════
       if (flowApi.isFlowApiAvailable()) {
-        // Auto-detect số profiles từ server
-        let numVideoWorkers = 1;
-        try {
-          const serverInfo = await flowApi.getFlowServerConcurrency();
-          numVideoWorkers = Math.max(1, (serverInfo.accounts || []).length);
-          console.log(`[FullPipeline] Step 5: ${numVideoWorkers} profile(s) detected for video`);
-        } catch {
-          const { videoConcurrency } = getConcurrencySettings();
-          numVideoWorkers = videoConcurrency;
-          console.warn(`[FullPipeline] Step 5: Cannot detect profiles, using setting=${numVideoWorkers}`);
-        }
+        // Web controls total parallel video jobs; server distributes round-robin
+        const { videoConcurrency } = getConcurrencySettings();
+        const numVideoWorkers = Math.max(1, videoConcurrency);
+        console.log(`[FullPipeline] Step 5: ${numVideoWorkers} video workers (web setting)`);
 
         // Get latest state to filter keys with images + prompts
         const latestStateForFilter = await new Promise<any>(resolve => {

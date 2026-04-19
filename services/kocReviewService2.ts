@@ -582,14 +582,13 @@ export const generateKocImageBatch = async (
   
   const upscaleOpt = imageQuality === '4K' ? '4K' : undefined;
   
-  // Step 1: Query server for profile count → dùng làm concurrency
-  let numProfiles = maxConcurrency;
+  // Step 1: Query server for profile info (logging only — server handles distribution)
   try {
     const serverInfo = await flowApi.getFlowServerConcurrency();
-    numProfiles = Math.max(1, (serverInfo.accounts || []).length);
-    console.log(`[BatchImage] Server has ${numProfiles} profile(s), using as concurrency`);
+    const numProfiles = (serverInfo.accounts || []).length;
+    console.log(`[BatchImage] Server has ${numProfiles} profile(s). Web concurrency: ${maxConcurrency}`);
   } catch {
-    console.warn('[BatchImage] Cannot query server profiles, using maxConcurrency=' + maxConcurrency);
+    console.log(`[BatchImage] Cannot query server profiles. Web concurrency: ${maxConcurrency}`);
   }
 
   // Step 2: Upload refs ONCE (shared across all requests)
@@ -608,7 +607,8 @@ export const generateKocImageBatch = async (
   }
   
   const useR2I = uploadedPaths.length > 0;
-  const concurrency = Math.min(numProfiles, items.length);
+  // Web controls total parallel jobs; server distributes round-robin across profiles
+  const concurrency = Math.min(maxConcurrency, items.length);
   console.log(`[BatchImage] ${items.length} scenes, concurrency=${concurrency}, mode=${useR2I ? 'R2I' : 'T2I'}`);
 
   // Step 3: Generate each scene as INDIVIDUAL request
