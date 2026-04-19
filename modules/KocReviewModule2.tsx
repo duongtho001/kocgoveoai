@@ -35,7 +35,6 @@ const VOICE_OPTIONS = [
 
 // Flow API Voice options for video generation (R2V) — tên audioSpeaker chính thức
 const FLOW_VOICE_OPTIONS = [
-  { value: '', label: '-- Không dùng Voice --', hasDemo: false },
   { value: 'Achernar', label: '🎙️ Achernar', hasDemo: true },
   { value: 'Achird', label: '🎙️ Achird', hasDemo: true },
   { value: 'Algenib', label: '🎙️ Algenib', hasDemo: true },
@@ -110,7 +109,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
     targetAudience: '',
     imageStyle: 'Realistic',
     imageQuality: 'fast', // 'fast' | '4k'
-    flowVoice: '', // Flow API voice for R2V
+    flowVoice: 'Achernar', // Flow API voice for R2V — default to first voice
     sceneCount: 5,
     productFiles: [], 
     productPreviewUrls: [],
@@ -2029,20 +2028,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Giới tính nhân vật</label>
-                <select value={state.gender} onChange={e => setState(p => ({ ...p, gender: e.target.value }))} className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold`}>
-                  <option value="Nữ">Nữ</option>
-                  <option value="Nam">Nam</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Giọng điệu vùng miền</label>
-                <select value={state.voice} onChange={e => setState(p => ({ ...p, voice: e.target.value }))} className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold`}>
-                  {VOICE_OPTIONS.map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase px-1">Giới tính nhân vật</label>
+              <select value={state.gender} onChange={e => setState(p => ({ ...p, gender: e.target.value }))} className={`w-full p-3 border rounded-xl bg-white ${theme.colors.inputFocus} outline-none font-bold`}>
+                <option value="Nữ">Nữ</option>
+                <option value="Nam">Nam</option>
+              </select>
             </div>
 
             <div className="space-y-1">
@@ -2140,9 +2131,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                     </button>
                   )}
                 </div>
-                {state.flowVoice && (
-                  <p className="text-[9px] text-violet-500 font-bold px-1 mt-1">Voice được chọn sẽ gắn vào video R2V (Reference-to-Video)</p>
-                )}
+                <p className="text-[9px] text-violet-500 font-bold px-1 mt-1">Voice được chọn sẽ gắn vào video R2V (Reference-to-Video)</p>
               </div>
             </div>
 
