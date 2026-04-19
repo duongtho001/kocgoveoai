@@ -35,7 +35,7 @@ const VOICE_OPTIONS = [
 
 // Flow API Voice options for video generation (R2V) — tên audioSpeaker chính thức
 const FLOW_VOICE_OPTIONS = [
-  { value: '', label: '-- Không dùng Voice (I2V) --', hasDemo: false },
+  { value: '', label: '-- Không dùng Voice --', hasDemo: false },
   { value: 'Achernar', label: '🎙️ Achernar', hasDemo: true },
   { value: 'Achird', label: '🎙️ Achird', hasDemo: true },
   { value: 'Algenib', label: '🎙️ Algenib', hasDemo: true },
@@ -2141,7 +2141,7 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
                   )}
                 </div>
                 {state.flowVoice && (
-                  <p className="text-[9px] text-violet-500 font-bold px-1 mt-1">Khi chọn voice → Video sẽ dùng R2V (Reference-to-Video) thay vì I2V</p>
+                  <p className="text-[9px] text-violet-500 font-bold px-1 mt-1">Voice được chọn sẽ gắn vào video R2V (Reference-to-Video)</p>
                 )}
               </div>
             </div>

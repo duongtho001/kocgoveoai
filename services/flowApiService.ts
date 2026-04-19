@@ -1,6 +1,6 @@
 /**
  * Flow API Service
- * Tích hợp tạo ảnh AI (T2I, R2I) và video AI (I2V, T2V, R2V)
+ * Tích hợp tạo ảnh AI (T2I, R2I) và video AI (R2V, T2V)
  * Docs: https://sneer-enviable-evaluate.ngrok-free.dev/docs/integration
  */
 
@@ -603,25 +603,26 @@ export const generateFlowImage = async (
 };
 
 /**
- * Pipeline: File → Upload → Video
+ * Pipeline: File → Upload → Video (R2V)
  */
 export const fileToVideo = async (
   file: File,
   prompt: string,
   aspectRatio: string = '9:16',
-  onProgress?: FlowProgressCallback
+  onProgress?: FlowProgressCallback,
+  voice?: string
 ): Promise<string> => {
   const path = await uploadImage(file);
-  const result = await imageToVideo(
-    [{ image_path: path, prompt }],
-    { aspect_ratio: aspectRatio },
+  const result = await multiRefVideo(
+    [{ image_paths: [path], prompt }],
+    { aspect_ratio: aspectRatio, voice },
     onProgress
   );
   return result.videoUrl;
 };
 
 /**
- * Pipeline: Base64 Image → Upload → Video
+ * Pipeline: Base64 Image → Upload → Video (R2V)
  */
 export const base64ImageToVideo = async (
   dataUrl: string,
@@ -631,8 +632,8 @@ export const base64ImageToVideo = async (
   voice?: string
 ): Promise<string> => {
   const path = await uploadBase64Image(dataUrl);
-  const result = await imageToVideo(
-    [{ image_path: path, prompt }],
+  const result = await multiRefVideo(
+    [{ image_paths: [path], prompt }],
     { aspect_ratio: aspectRatio, voice },
     onProgress
   );
@@ -640,13 +641,14 @@ export const base64ImageToVideo = async (
 };
 
 /**
- * Pipeline: Prompt → Ảnh → Video (end-to-end)
+ * Pipeline: Prompt → Ảnh → Video (end-to-end, R2V)
  */
 export const promptToVideo = async (
   imagePrompt: string,
   videoPrompt: string,
   aspectRatio: string = '9:16',
-  onProgress?: FlowProgressCallback
+  onProgress?: FlowProgressCallback,
+  voice?: string
 ): Promise<{ imageUrl: string; videoUrl: string }> => {
   // Step 1: Generate image
   const imgResult = await textToImage([imagePrompt], {
@@ -660,10 +662,10 @@ export const promptToVideo = async (
   const file = new File([blob], 'generated.png', { type: 'image/png' });
   const path = await uploadImage(file);
 
-  // Step 3: Create video from image
-  const vidResult = await imageToVideo(
-    [{ image_path: path, prompt: videoPrompt }],
-    { aspect_ratio: aspectRatio },
+  // Step 3: Create video from image (R2V)
+  const vidResult = await multiRefVideo(
+    [{ image_paths: [path], prompt: videoPrompt }],
+    { aspect_ratio: aspectRatio, voice },
     onProgress
   );
 
@@ -674,19 +676,17 @@ export const promptToVideo = async (
 };
 
 // ============================================================
-// Smart Video Generator (auto-route ITV / RTV)
+// Smart Video Generator (R2V Only)
 // ============================================================
 
 /**
- * Tạo video thông minh từ ảnh base64:
- * - Có voice → R2V (Reference-to-Video với giọng nói)
- * - Không voice → I2V (Image-to-Video thông thường)
+ * Tạo video từ ảnh base64 — luôn dùng R2V (Reference-to-Video)
  *
  * @param imageDataUrl - Base64 data URL của ảnh
  * @param prompt - Video prompt
  * @param options - aspect_ratio, model_tier, video_length_seconds, voice
  * @param onProgress - Callback theo dõi tiến trình
- * @returns videoUrl
+ * @returns videoUrl + jobId
  */
 export const generateVideoFromImage = async (
   imageDataUrl: string,
@@ -702,49 +702,19 @@ export const generateVideoFromImage = async (
   // Upload ảnh lên server
   const imagePath = await uploadBase64Image(imageDataUrl);
 
-  if (options.voice) {
-    // ── R2V: Reference-to-Video (hỗ trợ voice + ảnh tham chiếu) ──
-    console.log(`[generateVideo] R2V mode — voice: ${options.voice}`);
-    try {
-      const result = await multiRefVideo(
-        [{ image_paths: [imagePath], prompt }],
-        {
-          aspect_ratio: options.aspect_ratio || '9:16',
-          model_tier: options.model_tier || 'VEO_FLOW',
-          video_length_seconds: options.video_length_seconds || 10,
-          voice: options.voice,
-        },
-        onProgress
-      );
-      return { videoUrl: result.videoUrl, jobId: result.jobId };
-    } catch (r2vErr: any) {
-      // R2V+voice failed (Google 500) → fallback to I2V without voice
-      console.warn(`[generateVideo] R2V+voice failed: ${r2vErr.message}. Falling back to I2V (no voice)...`);
-      const fallback = await imageToVideo(
-        [{ image_path: imagePath, prompt }],
-        {
-          aspect_ratio: options.aspect_ratio || '9:16',
-          model_tier: options.model_tier || 'VEO_FLOW',
-          video_length_seconds: options.video_length_seconds || 8,
-        },
-        onProgress
-      );
-      return { videoUrl: fallback.videoUrl, jobId: fallback.jobId };
-    }
-  } else {
-    // ── I2V: Image-to-Video (không voice) ──
-    console.log('[generateVideo] I2V mode — no voice');
-    const result = await imageToVideo(
-      [{ image_path: imagePath, prompt }],
-      {
-        aspect_ratio: options.aspect_ratio || '9:16',
-        model_tier: options.model_tier || 'VEO_FLOW',
-        video_length_seconds: options.video_length_seconds || 8,
-      },
-      onProgress
-    );
-    return { videoUrl: result.videoUrl, jobId: result.jobId };
-  }
+  // ── Luôn dùng R2V (Reference-to-Video) — hỗ trợ voice + ảnh tham chiếu ──
+  console.log(`[generateVideo] R2V mode — voice: ${options.voice || 'none'}`);
+  const result = await multiRefVideo(
+    [{ image_paths: [imagePath], prompt }],
+    {
+      aspect_ratio: options.aspect_ratio || '9:16',
+      model_tier: options.model_tier || 'VEO_FLOW',
+      video_length_seconds: options.video_length_seconds || 10,
+      voice: options.voice,
+    },
+    onProgress
+  );
+  return { videoUrl: result.videoUrl, jobId: result.jobId };
 };
 
 // ============================================================
