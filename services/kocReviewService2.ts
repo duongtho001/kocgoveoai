@@ -575,7 +575,8 @@ export const generateKocImageBatch = async (
   refDataUrls: string[], // shared refs (product + face + outfit + bg) — upload 1 lần
   maxConcurrency: number = 2,
   imageQuality: 'normal' | '4K' = 'normal',
-  onProgress?: (jobInfo: any) => void
+  onProgress?: (jobInfo: any) => void,
+  onItemComplete?: (key: string, url: string) => void
 ): Promise<{ key: string; url: string }[]> => {
   if (items.length === 0) return [];
   
@@ -672,10 +673,12 @@ export const generateKocImageBatch = async (
         }
         
         results[idx] = { key: item.key, url: imageUrl };
+        if (onItemComplete) onItemComplete(item.key, imageUrl);
         console.log(`[BatchImage] ✅ ${item.key} done (${idx + 1}/${items.length})`);
       } catch (e: any) {
         console.error(`[BatchImage] ❌ ${item.key} failed:`, e.message);
         results[idx] = { key: item.key, url: '' };
+        if (onItemComplete) onItemComplete(item.key, '');
       }
     }
   };

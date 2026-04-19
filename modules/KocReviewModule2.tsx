@@ -1192,24 +1192,26 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         batchItems,
         refDataUrls,
         imageConcurrency,
-        state.imageQuality || 'normal'
+        state.imageQuality || 'normal',
+        undefined,
+        // Callback: hiển thị ảnh ngay khi mỗi cảnh hoàn thành
+        (key, url) => {
+          setState((prev: any) => ({
+            ...prev,
+            images: {
+              ...prev.images,
+              [key]: { ...prev.images[key], url: url || '', loading: false, error: url ? undefined : 'No image returned' }
+            }
+          }));
+          if (url) console.log(`[BulkImage] 🖼️ ${key} displayed`);
+        }
       );
 
-      // Step 4: Update state with results
+      // Safety net: clear any remaining loading states
       setState((prev: any) => {
         const newImages = { ...prev.images };
-        for (const result of results) {
-          if (result.url) {
-            newImages[result.key] = { ...newImages[result.key], url: result.url, loading: false };
-          } else {
-            newImages[result.key] = { ...newImages[result.key], loading: false, error: 'No image returned' };
-          }
-        }
-        // Mark any remaining keys as not loading
         keys.forEach(k => {
-          if (newImages[k]?.loading) {
-            newImages[k] = { ...newImages[k], loading: false };
-          }
+          if (newImages[k]?.loading) newImages[k] = { ...newImages[k], loading: false };
         });
         return { ...prev, images: newImages };
       });
@@ -1530,15 +1532,26 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
         batchItems,
         refDataUrls,
         imageConcurrency,
-        state.imageQuality || 'normal'
+        state.imageQuality || 'normal',
+        undefined,
+        // Callback: hiển thị ảnh ngay khi mỗi cảnh hoàn thành
+        (key, url) => {
+          setState((prev: any) => ({
+            ...prev,
+            images: {
+              ...prev.images,
+              [key]: { ...prev.images[key], url: url || '', loading: false }
+            }
+          }));
+          if (url) {
+            console.log(`[FullPipeline] Step 3: 🖼️ ${key} displayed`);
+          }
+        }
       );
 
-      // Update images state
+      // Ensure all loading states are cleared (safety net)
       setState((prev: any) => {
         const newImages = { ...prev.images };
-        for (const result of imageResults) {
-          newImages[result.key] = { ...newImages[result.key], url: result.url || '', loading: false };
-        }
         activeKeys.forEach(k => {
           if (newImages[k]?.loading) newImages[k] = { ...newImages[k], loading: false };
         });
