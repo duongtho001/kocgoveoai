@@ -113,7 +113,7 @@ export const generateKocScript = async (
     required.push(key);
   }
 
-  const MAX_SCRIPT_RETRIES = 2;
+  const MAX_SCRIPT_RETRIES = 4;
   
   for (let attempt = 0; attempt <= MAX_SCRIPT_RETRIES; attempt++) {
     try {

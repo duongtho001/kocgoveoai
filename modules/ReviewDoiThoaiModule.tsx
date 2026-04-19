@@ -742,7 +742,7 @@ const ReviewDoiThoaiModule: React.FC<Props> = ({ language = 'vi' }) => {
                   TẢI PROMPT ẢNH (.TXT)
                 </button>
                 <button onClick={() => { if (state.videoPrompts) { const text = Object.keys(state.videoPrompts).map(k => state.videoPrompts[k].text).filter(t => t).join('\n'); if (!text) return alert("Chưa có prompt"); const blob = new Blob([text], { type: 'text/plain' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'prompts_doithoai.txt'; link.click(); } }} className="w-full md:w-auto px-6 py-3 bg-[#25496c] text-white font-black rounded-xl shadow-lg hover:opacity-90 transition-all text-xs flex items-center justify-center gap-3 uppercase tracking-tight">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1.01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   TẢI VIDEO PROMPT (.TXT)
                 </button>
             </div>
