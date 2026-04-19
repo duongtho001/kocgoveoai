@@ -63,6 +63,25 @@ const ADDRESSING_OPTIONS = [
   "mình - mọi người"
 ];
 
+
+// Helper: convert image URL (blob/http) → base64 dataUrl
+const urlToBase64 = async (url: string): Promise<string> => {
+  if (!url) return '';
+  if (url.startsWith('data:')) return url;
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    return new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
+};
+
 interface KocReviewModule2Props {
   language?: string;
   loggedInUser?: string | null;
@@ -1238,8 +1257,12 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: true } }
     }));
     try {
+      // Convert generated scene image → base64 for R2V reference
+      const imgBase64 = await urlToBase64(state.images[key].url);
+      if (!imgBase64) throw new Error('Cannot convert image to base64');
+      
       const result = await flowApi.generateVideoFromImage(
-        state.images[key].url,
+        imgBase64,
         state.videoPrompts[key].text,
         { aspect_ratio: '9:16', voice: state.flowVoice || undefined },
         (job) => console.log(`[Video ${key}] ${job.status} ${job.progress}%`)
@@ -1566,25 +1589,6 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
       // ══════════════════════════════════════════════════════
       const { videoPromptConcurrency } = getConcurrencySettings();
 
-      // Helper: convert image URL (blob/http) → base64 dataUrl
-      const urlToBase64 = async (url: string): Promise<string> => {
-        if (!url) return '';
-        // Already base64
-        if (url.startsWith('data:')) return url;
-        try {
-          const resp = await fetch(url);
-          const blob = await resp.blob();
-          return new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = () => resolve('');
-            reader.readAsDataURL(blob);
-          });
-        } catch {
-          return '';
-        }
-      };
-
       const genVideoPrompt = async (key: string) => {
         setState(p => ({ ...p, videoPrompts: { ...p.videoPrompts, [key]: { ...p.videoPrompts[key], loading: true, visible: true } } }));
         try {
@@ -1676,8 +1680,20 @@ const KocReviewModule2: React.FC<KocReviewModule2Props> = ({ language = 'vi', lo
             }));
             
             try {
+              // Convert generated scene image URL → base64 (R2V needs base64 data URL as reference)
+              const imgBase64 = await urlToBase64(imgUrl);
+              if (!imgBase64) {
+                console.warn(`[FullPipeline] Step 5: ⚠️ Cannot convert image to base64 for ${key}, skipping video`);
+                setState((prev: any) => ({
+                  ...prev,
+                  images: { ...prev.images, [key]: { ...prev.images[key], videoLoading: false } }
+                }));
+                continue;
+              }
+              console.log(`[FullPipeline] Step 5: 🖼️ ${key} image converted to base64 (${Math.round(imgBase64.length/1024)}KB)`);
+              
               const videoResult = await flowApi.generateVideoFromImage(
-                imgUrl, vPrompt,
+                imgBase64, vPrompt,
                 { aspect_ratio: '9:16', voice: state.flowVoice || undefined }
               );
               setState((prev: any) => ({
