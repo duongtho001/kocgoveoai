@@ -457,7 +457,6 @@ export const constructKocImagePrompt = (
     ${visualRules}
     ${visualNote ? `BỐ CỤC THỊ GIÁC: ${visualNote}.` : ""}
     ${poseInstruction} 
-    BỐI CẢNH CẢNH QUAY: "${scriptPart}". 
     ${userCustomPrompt || ""}
   `.trim();
 };
